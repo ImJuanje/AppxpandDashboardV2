@@ -1,0 +1,355 @@
+/* ============================================================
+   AppXpand · API de la plataforma (Netlify Functions + Netlify Blobs)
+   ------------------------------------------------------------
+   Todas las rutas cuelgan de /api/*
+   Variables de entorno (Netlify → Site configuration → Environment variables):
+     ADMIN_CODE      (obligatoria) tu código de administrador. Mínimo 8 caracteres.
+     SESSION_SECRET  (opcional)    clave para firmar sesiones. Si no existe, se
+                                   deriva de ADMIN_CODE.
+   ============================================================ */
+import { getStore } from '@netlify/blobs';
+import { createHash, createHmac, timingSafeEqual, randomInt, randomUUID } from 'node:crypto';
+
+export const config = { path: '/api/*' };
+
+const STATUSES = ['nuevo', 'contactado', 'reunion', 'propuesta', 'ganado', 'perdido'];
+const TYPES = ['Peluquería o estética', 'Restaurante o bar', 'Tienda', 'Servicios (reformas, talleres, clínicas…)', 'Otro'];
+const SERVICES = ['Página web', 'Optimización de perfil de Google', 'Paquete lanzadera', 'Por definir'];
+const CITIES = ['Albacete', 'Ciudad Real', 'Alicante', 'Otra'];
+const ADMIN = { id: 'admin', name: 'Admin', role: 'admin' };
+const HOUR = 3600e3;
+const MAX_IMPORT = 150;
+
+class HttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+/* ---------- utilidades ---------- */
+const sha = s => createHash('sha256').update(s).digest('hex');
+const now = () => new Date().toISOString();
+const str = (v, max) => String(v ?? '').trim().slice(0, max);
+const isDay = s => /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s));
+const isIso = s => typeof s === 'string' && !isNaN(Date.parse(s));
+const isId = s => /^[\w-]{1,40}$/.test(s || '');
+const json = (data, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }
+  });
+const safeEq = (a, b) => {
+  const x = Buffer.from(a), y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
+async function readBody(req) {
+  try { const b = await req.json(); return b && typeof b === 'object' ? b : {}; }
+  catch { throw new HttpError(400, 'Petición no válida.'); }
+}
+
+/* ---------- secretos y sesiones ---------- */
+function adminCode() {
+  const c = (process.env.ADMIN_CODE || '').trim().toUpperCase();
+  if (c.length < 8) throw new HttpError(500, 'Falta configurar la variable ADMIN_CODE en Netlify (mínimo 8 caracteres).');
+  return c;
+}
+const secret = () => process.env.SESSION_SECRET || sha('sess|' + adminCode());
+
+function sign(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return body + '.' + createHmac('sha256', secret()).update(body).digest('base64url');
+}
+function verify(token) {
+  const [body, sig] = String(token || '').split('.');
+  if (!body || !sig) return null;
+  const good = createHmac('sha256', secret()).update(body).digest('base64url');
+  if (!safeEq(sig, good)) return null;
+  try {
+    const p = JSON.parse(Buffer.from(body, 'base64url').toString());
+    return p && p.exp > Date.now() ? p : null;
+  } catch { return null; }
+}
+
+/* ---------- usuarios ---------- */
+const pub = u => ({ id: u.id, name: u.name, role: u.role, createdAt: u.createdAt || null });
+
+async function listUsers(db) {
+  const { blobs } = await db.list({ prefix: 'u/' });
+  const users = await Promise.all(blobs.map(b => db.get(b.key, { type: 'json' })));
+  return users.filter(Boolean).map(pub).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+}
+const slug = n => n.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '').slice(0, 20) || 'usuario';
+
+function newCode() {
+  const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sin 0/O/1/I/L
+  let r = '';
+  for (let i = 0; i < 12; i++) r += A[randomInt(A.length)];
+  return `${r.slice(0, 4)}-${r.slice(4, 8)}-${r.slice(8)}`;
+}
+async function freshCode(db) {
+  for (;;) {
+    const code = newCode(), h = sha(code);
+    if (!(await db.get('h/' + h, { type: 'json' }))) return { code, h };
+  }
+}
+
+async function createUser(db, name, role) {
+  let id = slug(name);
+  if (id === 'admin') id = 'admin2';
+  const base = id;
+  for (let i = 2; await db.get('u/' + id, { type: 'json' }); i++) id = base + i;
+  const { code, h } = await freshCode(db);
+  const user = { id, name, role, codeHash: h, createdAt: now() };
+  await db.setJSON('u/' + id, user);
+  await db.setJSON('h/' + h, { id });
+  return { user: pub(user), code };
+}
+
+async function resetUser(db, id) {
+  const u = await db.get('u/' + id, { type: 'json' });
+  if (!u) throw new HttpError(404, 'Usuario no encontrado.');
+  const { code, h } = await freshCode(db);
+  await db.delete('h/' + u.codeHash);
+  u.codeHash = h;
+  await db.setJSON('u/' + id, u);
+  await db.setJSON('h/' + h, { id });
+  return { user: pub(u), code };
+}
+
+async function deleteUser(db, id) {
+  const u = await db.get('u/' + id, { type: 'json' });
+  if (!u) throw new HttpError(404, 'Usuario no encontrado.');
+  await db.delete('u/' + id);
+  await db.delete('h/' + u.codeHash);
+  // sus clientes pasan al administrador
+  const t = now();
+  const clients = await allClients(db);
+  await Promise.all(clients.filter(c => c.owner === id).map(c => {
+    c.owner = 'admin';
+    c.updatedAt = t;
+    c.log = [...(c.log || []), { t, by: 'admin', type: 'estado', text: `Reasignado a ${ADMIN.name} (baja de ${u.name})` }].slice(-200);
+    return db.setJSON('c/' + c.id, c);
+  }));
+}
+
+/* ---------- login ---------- */
+async function lockState(db, ip) {
+  const l = await db.get('rl/' + ip, { type: 'json' });
+  if (l && l.until > Date.now()) throw new HttpError(429, `Demasiados intentos. Espera ${Math.ceil((l.until - Date.now()) / 1000)} s.`);
+  return l && Date.now() - (l.t || 0) < 15 * 60e3 ? l : { n: 0 };
+}
+
+async function login(req, ctx, db) {
+  const { code, remember } = await readBody(req);
+  const c = str(code, 64).toUpperCase();
+  if (!c) throw new HttpError(400, 'Introduce tu código de alta.');
+  const ip = String(ctx?.ip || 'unknown').replace(/[^\w.:-]/g, '_').slice(0, 60);
+  const lock = await lockState(db, ip);
+
+  let user = null;
+  if (safeEq(sha(c), sha(adminCode()))) user = ADMIN;
+  else {
+    const ref = await db.get('h/' + sha(c), { type: 'json' });
+    const u = ref && (await db.get('u/' + ref.id, { type: 'json' }));
+    if (u) user = pub(u);
+  }
+
+  if (!user) {
+    const n = (lock.n || 0) + 1;
+    await db.setJSON('rl/' + ip, n >= 5 ? { n: 0, until: Date.now() + 60e3 } : { n, t: Date.now() });
+    throw new HttpError(401, 'Código no válido. Revísalo o pídeselo al administrador.');
+  }
+  await db.delete('rl/' + ip);
+  const exp = Date.now() + (remember ? 14 * 24 * HOUR : 12 * HOUR);
+  // «v» ata la sesión al código vigente: si se genera uno nuevo, las sesiones antiguas dejan de valer
+  const v = user.id === 'admin' ? sha(adminCode()).slice(0, 8) : sha(c).slice(0, 8);
+  return json({ token: sign({ id: user.id, exp, v }), exp, user });
+}
+
+async function authenticate(req, db) {
+  const m = /^Bearer (.+)$/.exec(req.headers.get('authorization') || '');
+  const p = m && verify(m[1]);
+  if (!p) throw new HttpError(401, 'Sesión caducada. Vuelve a entrar.');
+  if (p.id === 'admin') {
+    if (p.v !== sha(adminCode()).slice(0, 8)) throw new HttpError(401, 'Sesión caducada. Vuelve a entrar.');
+    return ADMIN;
+  }
+  const u = await db.get('u/' + p.id, { type: 'json' });
+  if (!u || p.v !== u.codeHash.slice(0, 8)) throw new HttpError(401, 'Tu acceso ya no está activo. Vuelve a entrar.');
+  return pub(u);
+}
+const isAdmin = u => u.role === 'admin';
+
+/* ---------- clientes ---------- */
+async function allClients(db) {
+  const { blobs } = await db.list({ prefix: 'c/' });
+  const list = await Promise.all(blobs.map(b => db.get(b.key, { type: 'json' })));
+  return list.filter(Boolean);
+}
+async function getClient(db, id, user) {
+  if (!isId(id)) throw new HttpError(404, 'Cliente no encontrado.');
+  const c = await db.get('c/' + id, { type: 'json' });
+  if (!c || (!isAdmin(user) && c.owner !== user.id)) throw new HttpError(404, 'Cliente no encontrado.');
+  return c;
+}
+
+function cleanFields(b) {
+  const business = str(b.business, 120);
+  if (!business) throw new HttpError(400, 'El nombre del negocio es obligatorio.');
+  const email = str(b.email, 120);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'El email no parece válido.');
+  return {
+    business,
+    contact: str(b.contact, 80),
+    phone: str(b.phone, 30),
+    email,
+    type: TYPES.includes(b.type) ? b.type : TYPES[4],
+    service: SERVICES.includes(b.service) ? b.service : SERVICES[3],
+    city: CITIES.includes(b.city) ? b.city : CITIES[3],
+    status: STATUSES.includes(b.status) ? b.status : 'nuevo',
+    value: Math.min(1e7, Math.max(0, Math.round(Number(b.value) || 0))),
+    next: isDay(String(b.next || '')) ? String(b.next) : '',
+    notes: str(b.notes, 1500)
+  };
+}
+
+async function resolveOwner(db, user, requested) {
+  if (!isAdmin(user)) return user.id;
+  const o = str(requested, 40);
+  if (o === 'admin') return 'admin';
+  if (o && isId(o) && (await db.get('u/' + o, { type: 'json' }))) return o;
+  return user.id;
+}
+const nameOf = async (db, id) => (id === 'admin' ? ADMIN.name : (await db.get('u/' + id, { type: 'json' }))?.name || id);
+
+async function createClient(req, user, db) {
+  const b = await readBody(req);
+  const f = cleanFields(b);
+  const t = now();
+  const c = {
+    id: 'c' + randomUUID().replace(/-/g, '').slice(0, 16),
+    ...f,
+    owner: await resolveOwner(db, user, b.owner),
+    createdAt: t,
+    updatedAt: t,
+    log: [{ t, by: user.id, type: 'estado', text: 'Cliente creado' }]
+  };
+  await db.setJSON('c/' + c.id, c);
+  return json(c, 201);
+}
+
+async function updateClient(req, id, user, db) {
+  const cur = await getClient(db, id, user);
+  const b = await readBody(req);
+  if (b.base && b.base !== cur.updatedAt)
+    throw new HttpError(409, 'Este cliente se ha modificado desde otro dispositivo. Se ha cargado la versión más reciente.');
+  const f = cleanFields(b);
+  const owner = await resolveOwner(db, user, b.owner ?? cur.owner);
+  const t = now();
+  const log = [...(cur.log || [])];
+  if (cur.status !== f.status) log.push({ t, by: user.id, type: 'estado', text: `Estado: ${cur.status} → ${f.status}` });
+  if (cur.owner !== owner) log.push({ t, by: user.id, type: 'estado', text: `Reasignado a ${await nameOf(db, owner)}` });
+  const c = { ...cur, ...f, owner, updatedAt: t, log: log.slice(-200) };
+  await db.setJSON('c/' + id, c);
+  return json(c);
+}
+
+async function addNote(req, id, user, db) {
+  const cur = await getClient(db, id, user);
+  const text = str((await readBody(req)).text, 400);
+  if (!text) throw new HttpError(400, 'La nota está vacía.');
+  const t = now();
+  const c = { ...cur, updatedAt: t, log: [...(cur.log || []), { t, by: user.id, type: 'nota', text }].slice(-200) };
+  await db.setJSON('c/' + id, c);
+  return json(c);
+}
+
+async function importClients(req, db) {
+  const b = await readBody(req);
+  if (!Array.isArray(b.clients)) throw new HttpError(400, 'Formato no válido.');
+  if (b.clients.length > MAX_IMPORT) throw new HttpError(413, `Máximo ${MAX_IMPORT} clientes por envío.`);
+  const owners = new Set(['admin', ...(await listUsers(db)).map(u => u.id)]);
+  const t = now();
+  let added = 0, updated = 0, skipped = 0;
+  await Promise.all(b.clients.map(async raw => {
+    let f;
+    try { f = cleanFields(raw || {}); } catch { skipped++; return; }
+    const id = str(raw.id, 40).replace(/[^\w-]/g, '') || 'c' + randomUUID().replace(/-/g, '').slice(0, 16);
+    const created = isIso(raw.createdAt) ? raw.createdAt : t;
+    const c = {
+      id, ...f,
+      owner: owners.has(raw.owner) ? raw.owner : 'admin',
+      createdAt: created,
+      updatedAt: isIso(raw.updatedAt) ? raw.updatedAt : created,
+      log: Array.isArray(raw.log)
+        ? raw.log.slice(-200).map(l => ({
+            t: isIso(l?.t) ? l.t : created,
+            by: str(l?.by, 40),
+            type: l?.type === 'nota' ? 'nota' : 'estado',
+            text: str(l?.text, 400)
+          }))
+        : []
+    };
+    const cur = await db.get('c/' + id, { type: 'json' });
+    if (!cur) { await db.setJSON('c/' + id, c); added++; }
+    else if (c.updatedAt > cur.updatedAt) { await db.setJSON('c/' + id, c); updated++; }
+    else skipped++;
+  }));
+  return json({ added, updated, skipped });
+}
+
+/* ---------- enrutado ---------- */
+export default async (req, ctx) => {
+  try {
+    const db = getStore({ name: 'crm', consistency: 'strong' });
+    const [res, id, sub] = new URL(req.url).pathname.replace(/^\/api\/?/, '').split('/').filter(Boolean);
+    const m = req.method;
+
+    if (res === 'login' && m === 'POST') return await login(req, ctx, db);
+
+    const user = await authenticate(req, db);
+    const admin = isAdmin(user);
+    const needAdmin = () => { if (!admin) throw new HttpError(403, 'Solo el administrador puede hacer esto.'); };
+
+    if (res === 'sync' && m === 'GET') {
+      const [users, clients] = await Promise.all([admin ? listUsers(db) : [], allClients(db)]);
+      return json({
+        user,
+        users: admin ? [ADMIN, ...users] : [user],
+        clients: admin ? clients : clients.filter(c => c.owner === user.id)
+      });
+    }
+
+    if (res === 'clients') {
+      if (!id && m === 'POST') return await createClient(req, user, db);
+      if (!id && m === 'DELETE') {
+        needAdmin();
+        const { blobs } = await db.list({ prefix: 'c/' });
+        await Promise.all(blobs.map(b => db.delete(b.key)));
+        return json({ ok: true, deleted: blobs.length });
+      }
+      if (id && !sub && m === 'PUT') return await updateClient(req, id, user, db);
+      if (id && !sub && m === 'DELETE') { await getClient(db, id, user); await db.delete('c/' + id); return json({ ok: true }); }
+      if (id && sub === 'notes' && m === 'POST') return await addNote(req, id, user, db);
+    }
+
+    if (res === 'import' && m === 'POST') { needAdmin(); return await importClients(req, db); }
+
+    if (res === 'users') {
+      needAdmin();
+      if (!id && m === 'POST') {
+        const b = await readBody(req);
+        const name = str(b.name, 40);
+        if (!name) throw new HttpError(400, 'Escribe el nombre del comercial.');
+        return json(await createUser(db, name, b.role === 'admin' ? 'admin' : 'comercial'), 201);
+      }
+      if (id && !isId(id)) throw new HttpError(404, 'Usuario no encontrado.');
+      if (id && sub === 'reset' && m === 'POST') return json(await resetUser(db, id));
+      if (id && !sub && m === 'DELETE') { await deleteUser(db, id); return json({ ok: true }); }
+    }
+
+    throw new HttpError(404, 'Ruta no encontrada.');
+  } catch (e) {
+    if (e instanceof HttpError) return json({ error: e.message }, e.status);
+    console.error(e);
+    return json({ error: 'Error interno del servidor.' }, 500);
+  }
+};
