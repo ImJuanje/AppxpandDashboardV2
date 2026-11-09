@@ -16,7 +16,16 @@ const STATUSES = ['nuevo', 'contactado', 'reunion', 'propuesta', 'ganado', 'perd
 const TYPES = ['Peluquería o estética', 'Restaurante o bar', 'Tienda', 'Servicios (reformas, talleres, clínicas…)', 'Otro'];
 const SERVICES = ['Página web', 'Optimización de perfil de Google', 'Paquete lanzadera', 'Por definir'];
 const CITIES = ['Albacete', 'Ciudad Real', 'Alicante', 'Otra'];
+const NEWS_CATS = ['aviso', 'novedad', 'info', 'top'];
+const MAX_POSTS = 200;
 const ADMIN = { id: 'admin', name: 'Admin', role: 'admin' };
+
+// Mes natural en hora de España (para el ranking mensual)
+const MONTH_FMT = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit' });
+const monthOf = iso => {
+  const p = Object.fromEntries(MONTH_FMT.formatToParts(new Date(iso)).map(x => [x.type, x.value]));
+  return `${p.year}-${p.month}`;
+};
 const HOUR = 3600e3;
 const MAX_IMPORT = 150;
 
@@ -228,6 +237,7 @@ async function createClient(req, user, db) {
     id: 'c' + randomUUID().replace(/-/g, '').slice(0, 16),
     ...f,
     owner: await resolveOwner(db, user, b.owner),
+    wonAt: f.status === 'ganado' ? t : '',
     createdAt: t,
     updatedAt: t,
     log: [{ t, by: user.id, type: 'estado', text: 'Cliente creado' }]
@@ -247,7 +257,9 @@ async function updateClient(req, id, user, db) {
   const log = [...(cur.log || [])];
   if (cur.status !== f.status) log.push({ t, by: user.id, type: 'estado', text: `Estado: ${cur.status} → ${f.status}` });
   if (cur.owner !== owner) log.push({ t, by: user.id, type: 'estado', text: `Reasignado a ${await nameOf(db, owner)}` });
-  const c = { ...cur, ...f, owner, updatedAt: t, log: log.slice(-200) };
+  // wonAt = momento en que el cliente pasó a «ganado» (para el ranking del mes)
+  const wonAt = f.status === 'ganado' ? (cur.status === 'ganado' ? cur.wonAt || cur.updatedAt : t) : '';
+  const c = { ...cur, ...f, owner, wonAt, updatedAt: t, log: log.slice(-200) };
   await db.setJSON('c/' + id, c);
   return json(c);
 }
@@ -274,11 +286,13 @@ async function importClients(req, db) {
     try { f = cleanFields(raw || {}); } catch { skipped++; return; }
     const id = str(raw.id, 40).replace(/[^\w-]/g, '') || 'c' + randomUUID().replace(/-/g, '').slice(0, 16);
     const created = isIso(raw.createdAt) ? raw.createdAt : t;
+    const upd = isIso(raw.updatedAt) ? raw.updatedAt : created;
     const c = {
       id, ...f,
       owner: owners.has(raw.owner) ? raw.owner : 'admin',
       createdAt: created,
-      updatedAt: isIso(raw.updatedAt) ? raw.updatedAt : created,
+      updatedAt: upd,
+      wonAt: f.status === 'ganado' ? (isIso(raw.wonAt) ? raw.wonAt : upd) : '',
       log: Array.isArray(raw.log)
         ? raw.log.slice(-200).map(l => ({
             t: isIso(l?.t) ? l.t : created,
@@ -296,6 +310,65 @@ async function importClients(req, db) {
   return json({ added, updated, skipped });
 }
 
+/* ---------- AppXnews: publicaciones, ajustes y ranking ---------- */
+async function allPosts(db) {
+  const { blobs } = await db.list({ prefix: 'n/' });
+  const list = (await Promise.all(blobs.map(b => db.get(b.key, { type: 'json' })))).filter(Boolean);
+  return list
+    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.createdAt.localeCompare(a.createdAt))
+    .slice(0, MAX_POSTS);
+}
+
+function cleanPost(b) {
+  const title = str(b.title, 120);
+  if (!title) throw new HttpError(400, 'Escribe un título.');
+  const body = String(b.body ?? '').replace(/\r\n/g, '\n').trim().slice(0, 5000);
+  if (!body) throw new HttpError(400, 'Escribe el contenido de la publicación.');
+  return { title, body, category: NEWS_CATS.includes(b.category) ? b.category : 'info', pinned: b.pinned === true };
+}
+
+async function createPost(req, user, db) {
+  const f = cleanPost(await readBody(req));
+  const t = now();
+  const p = { id: 'n' + randomUUID().replace(/-/g, '').slice(0, 16), ...f, author: user.id, authorName: user.name, createdAt: t, updatedAt: t };
+  await db.setJSON('n/' + p.id, p);
+  return json(p, 201);
+}
+
+async function updatePost(req, id, db) {
+  if (!isId(id)) throw new HttpError(404, 'Publicación no encontrada.');
+  const cur = await db.get('n/' + id, { type: 'json' });
+  if (!cur) throw new HttpError(404, 'Publicación no encontrada.');
+  const p = { ...cur, ...cleanPost(await readBody(req)), updatedAt: now() };
+  await db.setJSON('n/' + id, p);
+  return json(p);
+}
+
+async function getSettings(db) {
+  const s = await db.get('s/settings', { type: 'json' });
+  return { showRanking: s ? s.showRanking !== false : true };
+}
+
+/* Top comerciales del mes: clientes que pasaron a «ganado» este mes. Solo cuenta a los
+   comerciales (no al admin). A los comerciales se les oculta el importe. */
+function buildRanking(clients, users, forAdmin) {
+  const month = monthOf(now());
+  const by = new Map();
+  for (const c of clients) {
+    if (c.status !== 'ganado' || monthOf(c.wonAt || c.updatedAt) !== month) continue;
+    const u = users.find(x => x.id === c.owner && x.role === 'comercial');
+    if (!u) continue;
+    const e = by.get(u.id) || { id: u.id, name: u.name, won: 0, value: 0 };
+    e.won++;
+    e.value += Number(c.value) || 0;
+    by.set(u.id, e);
+  }
+  const list = [...by.values()]
+    .sort((a, b) => b.won - a.won || b.value - a.value || a.name.localeCompare(b.name, 'es'))
+    .slice(0, 5);
+  return { month, list: forAdmin ? list : list.map(({ value, ...r }) => r) };
+}
+
 /* ---------- enrutado ---------- */
 export default async (req, ctx) => {
   try {
@@ -310,12 +383,39 @@ export default async (req, ctx) => {
     const needAdmin = () => { if (!admin) throw new HttpError(403, 'Solo el administrador puede hacer esto.'); };
 
     if (res === 'sync' && m === 'GET') {
-      const [users, clients] = await Promise.all([admin ? listUsers(db) : [], allClients(db)]);
+      const settings = await getSettings(db);
+      const wantRanking = admin || settings.showRanking;
+      const [users, clients, posts] = await Promise.all([
+        wantRanking ? listUsers(db) : [],
+        allClients(db),
+        allPosts(db)
+      ]);
       return json({
         user,
         users: admin ? [ADMIN, ...users] : [user],
-        clients: admin ? clients : clients.filter(c => c.owner === user.id)
+        clients: admin ? clients : clients.filter(c => c.owner === user.id),
+        posts,
+        settings,
+        ranking: wantRanking ? buildRanking(clients, users, admin) : null
       });
+    }
+
+    if (res === 'news') {
+      if (!id && m === 'POST') { needAdmin(); return await createPost(req, user, db); }
+      if (id && !sub && m === 'PUT') { needAdmin(); return await updatePost(req, id, db); }
+      if (id && !sub && m === 'DELETE') {
+        needAdmin();
+        if (!isId(id)) throw new HttpError(404, 'Publicación no encontrada.');
+        await db.delete('n/' + id);
+        return json({ ok: true });
+      }
+    }
+
+    if (res === 'settings' && m === 'PUT') {
+      needAdmin();
+      const b = await readBody(req);
+      await db.setJSON('s/settings', { showRanking: b.showRanking !== false });
+      return json(await getSettings(db));
     }
 
     if (res === 'clients') {
