@@ -49,7 +49,13 @@
     resumenOwner: '',
     editingId: null,
     editingBase: '',
-    filters: { ...EMPTY_FILTERS }
+    filters: { ...EMPTY_FILTERS },
+    posts: [],
+    ranking: null,
+    settings: { showRanking: true },
+    newsFilter: '',
+    newsSeen: '',
+    newsMarks: new Set()
   };
   const isAdmin = () => !!state.user && state.user.role === 'admin';
 
@@ -170,7 +176,9 @@
     stopPolling();
     clearSession();
     if ($('#clientDialog').open) $('#clientDialog').close();
+    if ($('#newsDialog').open) $('#newsDialog').close();
     state.token = null; state.user = null; state.users = []; state.data = { clients: [] }; state.editingId = null;
+    state.posts = []; state.ranking = null; state.newsMarks = new Set();
     $('#appView').hidden = true;
     $('#loginView').hidden = false;
     showLoginError(typeof msg === 'string' ? msg : '');
@@ -184,6 +192,9 @@
     state.user = d.user;
     state.users = d.users || [d.user];
     state.data.clients = d.clients || [];
+    state.posts = d.posts || [];
+    state.ranking = d.ranking || null;
+    state.settings = d.settings || { showRanking: true };
   }
 
   async function start(token) {
@@ -194,6 +205,9 @@
     state.cview = 'lista';
     state.resumenOwner = '';
     state.filters = { ...EMPTY_FILTERS };
+    state.newsFilter = '';
+    state.newsSeen = readSeen();
+    state.newsMarks = new Set();
     $('#filters').classList.remove('is-open');
     $('#toggleFilters').setAttribute('aria-expanded', 'false');
 
@@ -217,7 +231,7 @@
     try {
       applySync(await api('GET', 'sync'));
       syncUserControls();
-      if (!$('#clientDialog').open) renderCurrent();
+      if (!$('#clientDialog').open && !$('#newsDialog').open) renderCurrent();
     } catch (e) { if (!silent) fail(e); }
   }
 
@@ -273,8 +287,10 @@
   function switchView(v) {
     if (v === 'equipo' && !isAdmin()) v = 'resumen';
     state.view = v;
+    if (v !== 'news') state.newsMarks = new Set();
     $('#viewResumen').hidden = v !== 'resumen';
     $('#viewClientes').hidden = v !== 'clientes';
+    $('#viewNews').hidden = v !== 'news';
     $('#viewEquipo').hidden = v !== 'equipo';
     $$('#tabs button').forEach(b => {
       if (b.dataset.view === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -286,7 +302,9 @@
     if (!state.user) return;
     if (state.view === 'resumen') renderResumen();
     else if (state.view === 'clientes') renderClientes();
+    else if (state.view === 'news') renderNews();
     else renderEquipo();
+    updateNewsBadge();
   }
 
   /* ============================================================
@@ -294,6 +312,7 @@
      ============================================================ */
   function renderResumen() {
     $('#resumenTitle').textContent = `Hola, ${state.user.name}`;
+    renderNewsBanner();
     let list = allVisible();
     if (isAdmin()) {
       $('#resumenOwner').value = state.resumenOwner;
@@ -466,6 +485,189 @@
         <div class="col__list">${cards}</div></section>`;
     }).join('');
     return `<div class="board">${cols}</div>`;
+  }
+
+  /* ============================================================
+     APPXNEWS · tablón interno
+     ============================================================ */
+  const NEWS_CATS = [
+    { id: 'aviso',   label: 'Aviso',          plural: 'Avisos' },
+    { id: 'novedad', label: 'Novedad',        plural: 'Novedades' },
+    { id: 'info',    label: 'Información',    plural: 'Información' },
+    { id: 'top',     label: 'Reconocimiento', plural: 'Reconocimientos' }
+  ];
+  const MEDALS = ['🥇', '🥈', '🥉'];
+  const catLabel = id => (NEWS_CATS.find(c => c.id === id) || NEWS_CATS[2]).label;
+  const touched = p => p.updatedAt || p.createdAt;
+  const seenKey = () => 'appxnews_seen_' + (state.user ? state.user.id : '');
+  const readSeen = () => { try { return localStorage.getItem(seenKey()) || ''; } catch { return ''; } };
+  const sortPosts = () => state.posts.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.createdAt.localeCompare(a.createdAt));
+
+  /* «Sin leer»: publicaciones de otros más nuevas que la última vez que se abrió AppXnews
+     (en este dispositivo). La primera vez solo cuentan las de los últimos 14 días. */
+  function unreadPosts() {
+    if (!state.user) return [];
+    const base = state.newsSeen || new Date(Date.now() - 14 * 864e5).toISOString();
+    return state.posts.filter(p => p.author !== state.user.id && touched(p) > base);
+  }
+  function markNewsSeen() {
+    const latest = state.posts.reduce((m, p) => (touched(p) > m ? touched(p) : m), '');
+    if (latest && latest > state.newsSeen) {
+      state.newsSeen = latest;
+      try { localStorage.setItem(seenKey(), latest); } catch { /* ignorar */ }
+    }
+  }
+  function updateNewsBadge() {
+    const n = state.view === 'news' ? 0 : unreadPosts().length;
+    const b = $('#newsBadge');
+    b.hidden = !n; b.textContent = n;
+  }
+  function renderNewsBanner() {
+    const n = unreadPosts().length;
+    const el = $('#newsBanner');
+    el.hidden = !n;
+    if (n) el.textContent = n === 1
+      ? '📣 Tienes 1 publicación nueva en AppXnews. Ver ahora →'
+      : `📣 Tienes ${n} publicaciones nuevas en AppXnews. Ver ahora →`;
+  }
+
+  /* Texto de la publicación → HTML seguro: párrafos, listas con «- » y enlaces http(s) */
+  function richText(s) {
+    const link = t => t.replace(/(https?:\/\/[^\s<]*[^\s<.,;:!?)\]])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+    return String(s || '').split(/\n{2,}/).map(block => {
+      const lines = block.split('\n').filter(l => l.trim() !== '');
+      if (!lines.length) return '';
+      if (lines.every(l => /^\s*[-•]\s+/.test(l)))
+        return '<ul>' + lines.map(l => '<li>' + link(esc(l.replace(/^\s*[-•]\s+/, ''))) + '</li>').join('') + '</ul>';
+      return '<p>' + lines.map(l => link(esc(l))).join('<br>') + '</p>';
+    }).join('');
+  }
+
+  function renderRanking() {
+    const card = $('#rankCard');
+    const r = state.ranking;
+    if (!r) { card.hidden = true; return; }
+    card.hidden = false;
+    const [y, m] = r.month.split('-').map(Number);
+    const monthName = new Date(y, m - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+    const on = state.settings.showRanking !== false;
+    $('#rankTitle').textContent = `🏆 Top comerciales · ${monthName}`;
+    $('#rankToggle').checked = on;
+    $('#rankList').innerHTML = r.list.length
+      ? r.list.map((e, i) => `<li class="rank-item${e.id === state.user.id ? ' me' : ''}">
+          <span class="${i < 3 ? 'medal' : 'pos'}">${i < 3 ? MEDALS[i] : i + 1}</span>
+          <span><strong>${esc(e.name)}</strong>${e.id === state.user.id ? ' <small>(tú)</small>' : ''}</span>
+          <span class="rank-n">${e.won} ${e.won === 1 ? 'cierre' : 'cierres'}${isAdmin() && e.value ? `<small>${money(e.value)}</small>` : ''}</span></li>`).join('')
+      : '<li class="empty">Aún no hay cierres este mes. ¡El primero se lleva la medalla! 🥇</li>';
+    $('#rankNote').textContent = isAdmin()
+      ? (on ? 'Se calcula solo con los clientes que pasan a «Ganado» durante el mes. Los comerciales lo ven sin importes.'
+            : 'Ahora mismo los comerciales NO ven este ranking.')
+      : 'Se calcula con los clientes que pasan a «Ganado» durante el mes.';
+  }
+
+  function postHTML(p) {
+    const edited = p.updatedAt && p.updatedAt !== p.createdAt;
+    return `<article class="post post--${esc(p.category)}${p.pinned ? ' is-pinned' : ''}">
+      <header class="post__head">
+        <span class="cat cat--${esc(p.category)}">${esc(catLabel(p.category))}</span>
+        ${p.pinned ? '<span class="pin-tag">📌 Fijado</span>' : ''}
+        ${state.newsMarks.has(p.id) ? '<span class="pill-new">Nuevo</span>' : ''}
+        <time datetime="${esc(p.createdAt)}">${fmtDT(p.createdAt)}${edited ? ' · editado' : ''}</time>
+      </header>
+      <h3>${esc(p.title)}</h3>
+      <div class="post__body">${richText(p.body)}</div>
+      <footer class="post__foot"><small>Publicado por ${esc(p.authorName || 'Admin')}</small>
+        ${isAdmin() ? `<button type="button" class="btn btn--ghost btn--sm" data-edit="${esc(p.id)}">Editar</button>` : ''}</footer>
+    </article>`;
+  }
+
+  function renderNews() {
+    unreadPosts().forEach(p => state.newsMarks.add(p.id));
+    renderRanking();
+
+    const f = state.newsFilter;
+    $('#newsChips').innerHTML = [{ id: '', plural: 'Todo' }, ...NEWS_CATS]
+      .map(c => `<button type="button" class="chip" data-cat="${c.id}" aria-pressed="${f === c.id}">${c.plural}</button>`).join('');
+
+    const list = state.posts.filter(p => !f || p.category === f);
+    $('#newsList').innerHTML = list.length
+      ? list.map(postHTML).join('')
+      : `<div class="card"><p class="empty">${state.posts.length
+          ? 'No hay publicaciones en esta categoría.'
+          : (isAdmin() ? 'Todavía no has publicado nada. Pulsa «+ Nueva publicación» para empezar.'
+                       : 'Todavía no hay publicaciones. Cuando haya novedades las verás aquí.')}</p></div>`;
+    markNewsSeen();
+    updateNewsBadge();
+  }
+
+  /* ---------- Editor de publicaciones (admin) ---------- */
+  const ndlg = () => $('#newsDialog');
+  let editingPost = null;
+
+  function openPost(id) {
+    if (!isAdmin()) return;
+    const p = id ? state.posts.find(x => x.id === id) : null;
+    if (id && !p) return;
+    editingPost = id || null;
+    fillSelect($('#pCat'), NEWS_CATS.map(c => [c.id, c.label]));
+    $('#newsDlgTitle').textContent = p ? 'Editar publicación' : 'Nueva publicación';
+    $('#newsDlgSub').textContent = p ? `Publicada el ${fmtDT(p.createdAt)}` : '';
+    $('#pTitle').value = p ? p.title : '';
+    $('#pCat').value = p ? p.category : 'novedad';
+    $('#pPinned').checked = p ? !!p.pinned : false;
+    $('#pBody').value = p ? p.body : '';
+    $('#newsError').hidden = true;
+    $('#newsDelete').hidden = !p;
+    if (!ndlg().open) ndlg().showModal();
+    if (!p) $('#pTitle').focus();
+  }
+  function closePost() { if (ndlg().open) ndlg().close(); editingPost = null; }
+
+  async function savePost(ev) {
+    ev.preventDefault();
+    const title = $('#pTitle').value.trim();
+    const body = $('#pBody').value.trim();
+    const err = $('#newsError');
+    if (!title || !body) { err.textContent = !title ? 'Escribe un título.' : 'Escribe el contenido.'; err.hidden = false; return; }
+    err.hidden = true;
+    const payload = { title, body, category: $('#pCat').value, pinned: $('#pPinned').checked };
+    const btn = $('#newsForm button[type=submit]');
+    btn.disabled = true;
+    try {
+      const id = editingPost;
+      const p = id ? await api('PUT', `news/${encodeURIComponent(id)}`, payload) : await api('POST', 'news', payload);
+      const i = state.posts.findIndex(x => x.id === p.id);
+      if (i >= 0) state.posts[i] = p; else state.posts.push(p);
+      sortPosts();
+      closePost();
+      renderCurrent();
+      toast(id ? 'Publicación actualizada' : 'Publicado en AppXnews');
+    } catch (e) {
+      if (e.status >= 400 && e.status < 500 && !e.handled) { err.textContent = e.message; err.hidden = false; } else fail(e);
+    } finally { btn.disabled = false; }
+  }
+
+  async function deletePost() {
+    const id = editingPost;
+    const p = state.posts.find(x => x.id === id);
+    if (!p) return;
+    if (!confirm(`¿Eliminar «${p.title}»? Dejará de verse para todo el equipo.`)) return;
+    try {
+      await api('DELETE', `news/${encodeURIComponent(id)}`);
+      state.posts = state.posts.filter(x => x.id !== id);
+      closePost();
+      renderCurrent();
+      toast('Publicación eliminada');
+    } catch (e) { fail(e); }
+  }
+
+  async function toggleRanking(ev) {
+    const on = ev.target.checked;
+    try {
+      state.settings = await api('PUT', 'settings', { showRanking: on });
+      renderNews();
+      toast(on ? 'Los comerciales ya ven el ranking' : 'Ranking oculto para los comerciales');
+    } catch (e) { ev.target.checked = !on; fail(e); }
   }
 
   /* ============================================================
@@ -806,6 +1008,19 @@
     $('#importFile').addEventListener('change', e => { const f = e.target.files[0]; if (f) importJson(f); e.target.value = ''; });
     $('#loadDemo').addEventListener('click', loadDemo);
     $('#wipeAll').addEventListener('click', wipeAll);
+
+    // AppXnews
+    $('#newPost').addEventListener('click', () => openPost(null));
+    $('#newsList').addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (b) openPost(b.dataset.edit); });
+    $('#newsChips').addEventListener('click', e => { const b = e.target.closest('[data-cat]'); if (b) { state.newsFilter = b.dataset.cat; renderNews(); } });
+    $('#rankToggle').addEventListener('change', toggleRanking);
+    $('#newsBanner').addEventListener('click', () => switchView('news'));
+    $('#newsForm').addEventListener('submit', savePost);
+    $('#newsDlgClose').addEventListener('click', closePost);
+    $('#newsCancel').addEventListener('click', closePost);
+    $('#newsDelete').addEventListener('click', deletePost);
+    ndlg().addEventListener('click', e => { if (e.target === ndlg()) closePost(); });
+    ndlg().addEventListener('close', () => { editingPost = null; });
 
     // Diálogo
     $('#clientForm').addEventListener('submit', saveClient);

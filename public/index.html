@@ -59,6 +59,7 @@
       <nav class="tabs" id="tabs" aria-label="Secciones">
         <button type="button" data-view="resumen">Resumen</button>
         <button type="button" data-view="clientes">Clientes</button>
+        <button type="button" data-view="news">AppXnews <span class="tab-badge" id="newsBadge" hidden>0</span></button>
         <button type="button" data-view="equipo" data-admin>Equipo</button>
       </nav>
     </div>
@@ -78,6 +79,8 @@
           <select id="resumenOwner"></select>
         </label>
       </div>
+
+      <button type="button" class="news-banner" id="newsBanner" hidden></button>
 
       <div class="kpis" id="kpis"></div>
 
@@ -131,6 +134,31 @@
       </div>
 
       <div id="clientsOut" class="clients-out"></div>
+    </section>
+
+    <!-- APPXNEWS -->
+    <section id="viewNews" aria-labelledby="newsTitle" hidden>
+      <div class="sec-head">
+        <div>
+          <h2 id="newsTitle">AppX<span class="grad">news</span></h2>
+          <p class="muted">Avisos, novedades e información del equipo.</p>
+        </div>
+        <button class="btn btn--primary" id="newPost" type="button" data-admin hidden>+ Nueva publicación</button>
+      </div>
+
+      <article class="card rank" id="rankCard" hidden>
+        <div class="rank__head">
+          <h3 id="rankTitle">Top comerciales</h3>
+          <label class="switch" id="rankToggleWrap" data-admin hidden>
+            <input type="checkbox" id="rankToggle"> <span>Visible para los comerciales</span>
+          </label>
+        </div>
+        <ol class="rank-list" id="rankList"></ol>
+        <p class="muted rank__note" id="rankNote"></p>
+      </article>
+
+      <div class="chips" id="newsChips" role="group" aria-label="Filtrar publicaciones"></div>
+      <div id="newsList" class="news-list"></div>
     </section>
 
     <!-- EQUIPO (admin) -->
@@ -228,6 +256,40 @@
       <span class="spacer"></span>
       <button type="button" class="btn btn--ghost" id="dlgCancel">Cancelar</button>
       <button type="submit" class="btn btn--primary">Guardar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO PUBLICACIÓN (admin) ============ -->
+<dialog id="newsDialog" aria-labelledby="newsDlgTitle">
+  <form id="newsForm" novalidate>
+    <header class="dlg-head">
+      <div>
+        <h3 id="newsDlgTitle">Nueva publicación</h3>
+        <small id="newsDlgSub" class="muted"></small>
+      </div>
+      <button type="button" class="icon-btn" id="newsDlgClose" aria-label="Cerrar">✕</button>
+    </header>
+
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label class="span2">Título *
+          <input id="pTitle" type="text" maxlength="120" required placeholder="Ej. Nueva campaña de Navidad">
+        </label>
+        <label>Categoría<select id="pCat"></select></label>
+        <label class="check pin"><input type="checkbox" id="pPinned"> <span>Fijar arriba</span></label>
+        <label class="span2">Contenido *
+          <textarea id="pBody" rows="9" maxlength="5000" placeholder="Escribe aquí. Deja una línea en blanco para separar párrafos y empieza una línea con «- » para hacer listas. Los enlaces (https://…) se vuelven clicables."></textarea>
+        </label>
+      </div>
+      <p id="newsError" class="error" role="alert" hidden></p>
+    </div>
+
+    <footer class="dlg-foot">
+      <button type="button" class="btn btn--danger-ghost" id="newsDelete" hidden>Eliminar</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="newsCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Publicar</button>
     </footer>
   </form>
 </dialog>
