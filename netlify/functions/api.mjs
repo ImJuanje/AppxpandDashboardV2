@@ -80,10 +80,16 @@ function verify(token) {
 /* ---------- usuarios ---------- */
 const pub = u => ({ id: u.id, name: u.name, role: u.role, createdAt: u.createdAt || null });
 
+/* La lista se guarda en un índice para no leer un archivo por usuario en cada petición.
+   Se invalida (se borra) al crear o dar de baja a alguien. */
 async function listUsers(db) {
+  const cached = await db.get('idx/users', { type: 'json' });
+  if (cached) return cached;
   const { blobs } = await db.list({ prefix: 'u/' });
   const users = await Promise.all(blobs.map(b => db.get(b.key, { type: 'json' })));
-  return users.filter(Boolean).map(pub).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const list = users.filter(Boolean).map(pub).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  await db.setJSON('idx/users', list);
+  return list;
 }
 const slug = n => n.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '').slice(0, 20) || 'usuario';
 
@@ -109,6 +115,7 @@ async function createUser(db, name, role) {
   const user = { id, name, role, codeHash: h, createdAt: now() };
   await db.setJSON('u/' + id, user);
   await db.setJSON('h/' + h, { id });
+  await db.delete('idx/users');
   return { user: pub(user), code };
 }
 
@@ -128,6 +135,11 @@ async function deleteUser(db, id) {
   if (!u) throw new HttpError(404, 'Usuario no encontrado.');
   await db.delete('u/' + id);
   await db.delete('h/' + u.codeHash);
+  await db.delete('idx/users');
+  await db.delete('r/' + id);
+  // su conversación privada con administración desaparece con él
+  const { blobs: dm } = await db.list({ prefix: chanPrefix('dm.' + id) });
+  await Promise.all(dm.map(b => db.delete(b.key)));
   // sus clientes pasan al administrador
   const t = now();
   const clients = await allClients(db);
@@ -369,6 +381,127 @@ function buildRanking(clients, users, forAdmin) {
   return { month, list: forAdmin ? list : list.map(({ value, ...r }) => r) };
 }
 
+/* ---------- Chat interno ----------
+   Dos tipos de conversación:
+     «general»     → todo el equipo
+     «dm.<id>»     → privada entre un comercial y la administración
+   No existen chats entre comerciales. Cada mensaje es un archivo propio (sin conflictos
+   de escritura) con clave «<ms 13 cifras>-<emisor>-<aleatorio>», que ordena por fecha. */
+const CHAT_MAX_KEEP = 500;   // al superar esto se borran los más antiguos…
+const CHAT_PRUNE_TO = 400;   // …hasta dejar este número
+const CHAT_PAGE = 50;
+const CHAT_TEXT = 1000;
+let lastKeyTs = 0;
+
+const chanPrefix = ch => 'm/' + ch + '/';
+const isChatKey = k => /^\d{13}-[a-z0-9_]{1,30}-[0-9a-f]{6}$/.test(k || '');
+const keyTs = k => Number(k.slice(0, 13));
+const keySender = k => k.split('-')[1];
+function chatKey(from) {
+  const ts = Math.max(Date.now(), lastKeyTs + 1);
+  lastKeyTs = ts;
+  return `${String(ts).padStart(13, '0')}-${from}-${randomUUID().slice(0, 6)}`;
+}
+
+/* Conversaciones a las que tiene acceso este usuario */
+async function chatChannels(user, db) {
+  const general = { id: 'general', name: 'General', kind: 'general' };
+  if (!isAdmin(user)) return [general, { id: 'dm.' + user.id, name: 'Administración', kind: 'dm' }];
+  const reps = (await listUsers(db)).filter(u => u.role === 'comercial');
+  return [general, ...reps.map(u => ({ id: 'dm.' + u.id, name: u.name, kind: 'dm' }))];
+}
+async function chatChannel(user, db, id) {
+  const ch = (await chatChannels(user, db)).find(c => c.id === id);
+  if (!ch) throw new HttpError(403, 'No tienes acceso a esa conversación.');
+  return ch;
+}
+async function chanKeys(db, ch) {
+  const p = chanPrefix(ch);
+  const { blobs } = await db.list({ prefix: p });
+  return blobs.map(b => b.key.slice(p.length)).filter(isChatKey).sort();
+}
+async function loadEvents(db, ch, keys) {
+  const items = await Promise.all(keys.map(async k => [k, await db.get(chanPrefix(ch) + k, { type: 'json' })]));
+  return items.filter(([, v]) => v).map(([k, v]) => (keySender(k) === '_del' ? { type: 'del', id: k, target: v.target } : { type: 'msg', ...v }));
+}
+
+async function chatPoll(user, db, url) {
+  const chans = await chatChannels(user, db);
+  const openId = url.searchParams.get('open') || '';
+  if (openId && !chans.some(c => c.id === openId)) throw new HttpError(403, 'No tienes acceso a esa conversación.');
+  const after = url.searchParams.get('after') || '';
+  if (after && !isChatKey(after)) throw new HttpError(400, 'Cursor no válido.');
+
+  const reads = (await db.get('r/' + user.id, { type: 'json' })) || {};
+  const keysBy = await Promise.all(chans.map(c => chanKeys(db, c.id)));
+  let dirty = false;
+
+  const channels = chans.map((c, i) => {
+    const keys = keysBy[i];
+    const newest = keys.at(-1) || '';
+    // el general empieza «leído» la primera vez; las privadas cuentan todo desde el principio
+    if (reads[c.id] === undefined && c.kind === 'general') { reads[c.id] = newest; dirty = true; }
+    if (c.id === openId && newest > (reads[c.id] || '')) { reads[c.id] = newest; dirty = true; }
+    const rd = reads[c.id] || '';
+    const unread = keys.filter(k => k > rd && keySender(k) !== user.id && keySender(k) !== '_del').length;
+    const last = [...keys].reverse().find(k => keySender(k) !== '_del');
+    return { id: c.id, name: c.name, kind: c.kind, unread, lastTs: last ? keyTs(last) : 0 };
+  });
+  if (dirty) await db.setJSON('r/' + user.id, reads);
+
+  let open = null;
+  if (openId) {
+    const keys = keysBy[chans.findIndex(c => c.id === openId)];
+    let pick, hasMore = false;
+    if (after) pick = keys.filter(k => k > after);
+    else {
+      const msgs = keys.filter(k => keySender(k) !== '_del');
+      hasMore = msgs.length > CHAT_PAGE;
+      pick = msgs.slice(-CHAT_PAGE);
+    }
+    open = { id: openId, events: await loadEvents(db, openId, pick), cursor: keys.at(-1) || after, hasMore };
+  }
+  return json({ channels, open });
+}
+
+async function chatHistory(user, db, url) {
+  const channel = url.searchParams.get('channel') || '';
+  await chatChannel(user, db, channel);
+  const before = url.searchParams.get('before') || '';
+  if (!isChatKey(before)) throw new HttpError(400, 'Cursor no válido.');
+  const keys = (await chanKeys(db, channel)).filter(k => keySender(k) !== '_del' && k < before);
+  const pick = keys.slice(-CHAT_PAGE);
+  return json({ events: await loadEvents(db, channel, pick), hasMore: keys.length > pick.length });
+}
+
+async function chatSend(req, user, db) {
+  const b = await readBody(req);
+  const channel = str(b.channel, 60);
+  await chatChannel(user, db, channel);
+  const text = String(b.text ?? '').replace(/\r\n/g, '\n').trim().slice(0, CHAT_TEXT);
+  if (!text) throw new HttpError(400, 'El mensaje está vacío.');
+  const key = chatKey(user.id);
+  const msg = { id: key, channel, ts: keyTs(key), from: user.id, fromName: user.name, fromRole: user.role, text };
+  await db.setJSON(chanPrefix(channel) + key, msg);
+  const keys = await chanKeys(db, channel);
+  if (keys.length > CHAT_MAX_KEEP)
+    await Promise.all(keys.slice(0, keys.length - CHAT_PRUNE_TO).map(k => db.delete(chanPrefix(channel) + k)));
+  return json({ type: 'msg', ...msg }, 201);
+}
+
+/* Cada quien borra los suyos; el admin, cualquiera. Deja una «lápida» para que las demás
+   pantallas lo quiten también la próxima vez que preguntan. */
+async function chatDelete(user, db, channel, key) {
+  await chatChannel(user, db, channel);
+  if (!isChatKey(key) || keySender(key) === '_del') throw new HttpError(404, 'Mensaje no encontrado.');
+  const msg = await db.get(chanPrefix(channel) + key, { type: 'json' });
+  if (!msg) throw new HttpError(404, 'Mensaje no encontrado.');
+  if (!isAdmin(user) && msg.from !== user.id) throw new HttpError(403, 'Solo puedes borrar tus mensajes.');
+  await db.delete(chanPrefix(channel) + key);
+  await db.setJSON(chanPrefix(channel) + chatKey('_del'), { target: key, by: user.id });
+  return json({ ok: true });
+}
+
 /* ---------- enrutado ---------- */
 export default async (req, ctx) => {
   try {
@@ -429,6 +562,13 @@ export default async (req, ctx) => {
       if (id && !sub && m === 'PUT') return await updateClient(req, id, user, db);
       if (id && !sub && m === 'DELETE') { await getClient(db, id, user); await db.delete('c/' + id); return json({ ok: true }); }
       if (id && sub === 'notes' && m === 'POST') return await addNote(req, id, user, db);
+    }
+
+    if (res === 'chat') {
+      if (id === 'poll' && m === 'GET') return await chatPoll(user, db, new URL(req.url));
+      if (id === 'history' && m === 'GET') return await chatHistory(user, db, new URL(req.url));
+      if (id === 'send' && m === 'POST') return await chatSend(req, user, db);
+      if (id && sub && m === 'DELETE') return await chatDelete(user, db, id, sub);
     }
 
     if (res === 'import' && m === 'POST') { needAdmin(); return await importClients(req, db); }
