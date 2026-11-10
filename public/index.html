@@ -69,6 +69,7 @@
       <nav class="tabs" id="tabs" aria-label="Secciones">
         <button type="button" data-view="resumen">Resumen</button>
         <button type="button" data-view="clientes">Clientes</button>
+        <button type="button" data-view="kb">Centro comercial</button>
         <button type="button" data-view="news">AppXnews <span class="tab-badge" id="newsBadge" hidden>0</span></button>
         <button type="button" data-view="chat">Chat <span class="tab-badge" id="chatBadge" hidden>0</span></button>
         <button type="button" data-view="equipo" data-admin>Equipo</button>
@@ -145,6 +146,23 @@
       </div>
 
       <div id="clientsOut" class="clients-out"></div>
+    </section>
+
+    <!-- CENTRO DE CONOCIMIENTO -->
+    <section id="viewKb" aria-labelledby="kbTitle" hidden>
+      <div class="sec-head">
+        <div>
+          <h2 id="kbTitle">Centro de <span class="grad">conocimiento</span></h2>
+          <p class="muted">Todo lo que necesitas para vender con confianza.</p>
+        </div>
+        <button class="btn btn--primary" id="newKb" type="button" data-admin hidden>+ Nueva entrada</button>
+      </div>
+
+      <div class="kb-search">
+        <input id="kbQ" type="search" placeholder="Buscar objeciones, precios, servicios…" aria-label="Buscar en el centro de conocimiento" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="kbOut"></div>
+      <p class="kb-help">¿No encuentras la respuesta? <strong>Consulta con dirección antes de comprometerte con el cliente.</strong></p>
     </section>
 
     <!-- APPXNEWS -->
@@ -234,6 +252,7 @@
             <button class="btn btn--ghost" id="exportAll" type="button">Descargar todo (.json)</button>
             <label class="btn btn--ghost file-btn">Restaurar copia (.json)<input id="importFile" type="file" accept="application/json,.json" hidden></label>
             <button class="btn btn--ghost" id="loadDemo" type="button">Cargar datos de ejemplo</button>
+            <button class="btn btn--ghost" id="loadKb" type="button">Cargar contenido base del Centro comercial</button>
             <button class="btn btn--danger" id="wipeAll" type="button">Borrar todos los clientes</button>
           </div>
         </article>
@@ -325,6 +344,45 @@
       <span class="spacer"></span>
       <button type="button" class="btn btn--ghost" id="newsCancel">Cancelar</button>
       <button type="submit" class="btn btn--primary">Publicar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO ENTRADA DEL CENTRO (admin) ============ -->
+<dialog id="kbDialog" aria-labelledby="kbDlgTitle">
+  <form id="kbForm" novalidate>
+    <header class="dlg-head">
+      <div>
+        <h3 id="kbDlgTitle">Nueva entrada</h3>
+        <small id="kbDlgSub" class="muted"></small>
+      </div>
+      <button type="button" class="icon-btn" id="kbDlgClose" aria-label="Cerrar">✕</button>
+    </header>
+
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label>Sección<select id="kSection"></select></label>
+        <label id="kCatWrap">Tipo de objeción<select id="kCat"></select></label>
+        <label class="span2"><span id="kQuestionLbl">Título *</span>
+          <input id="kQuestion" type="text" maxlength="200" required placeholder="Ej. «Me parece demasiado caro»">
+        </label>
+        <label class="span2"><span id="kAnswerLbl">Contenido *</span>
+          <textarea id="kAnswer" rows="9" maxlength="4000" placeholder="Escribe aquí el texto."></textarea>
+          <small class="muted">Línea en blanco = nuevo párrafo · «- » al empezar = lista · «1. » = lista numerada · «| a | b |» = tabla (la primera fila es la cabecera) · los enlaces https:// se vuelven clicables.</small>
+        </label>
+        <label class="span2">Palabras clave para el buscador
+          <input id="kKeywords" type="text" maxlength="300" placeholder="caro, costoso, mucho dinero, precio alto…">
+          <small class="muted">Separadas por comas. Escribe las formas en que un cliente (o un comercial) lo diría: así «es caro» encuentra esta respuesta.</small>
+        </label>
+      </div>
+      <p id="kbError" class="error" role="alert" hidden></p>
+    </div>
+
+    <footer class="dlg-foot">
+      <button type="button" class="btn btn--danger-ghost" id="kbDelete" hidden>Eliminar</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="kbCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Guardar</button>
     </footer>
   </form>
 </dialog>

@@ -52,6 +52,10 @@
     editingBase: '',
     filters: { ...EMPTY_FILTERS },
     posts: [],
+    kb: [],
+    kbSection: '',
+    kbQ: '',
+    kbOpen: new Map(),
     ranking: null,
     settings: { showRanking: true },
     newsFilter: '',
@@ -180,6 +184,8 @@
     clearSession();
     if ($('#clientDialog').open) $('#clientDialog').close();
     if ($('#newsDialog').open) $('#newsDialog').close();
+    if ($('#kbDialog').open) $('#kbDialog').close();
+    state.kb = []; state.kbSection = ''; state.kbQ = ''; state.kbOpen = new Map(); $('#kbQ').value = '';
     state.token = null; state.user = null; state.users = []; state.data = { clients: [] }; state.editingId = null;
     state.posts = []; state.ranking = null; state.newsMarks = new Set();
     clearTimeout(chatTimer); state.chat = freshChat(); document.title = BASE_TITLE;
@@ -197,6 +203,7 @@
     state.users = d.users || [d.user];
     state.data.clients = d.clients || [];
     state.posts = d.posts || [];
+    state.kb = d.kb || [];
     state.ranking = d.ranking || null;
     state.settings = d.settings || { showRanking: true };
   }
@@ -210,6 +217,7 @@
     state.resumenOwner = '';
     state.filters = { ...EMPTY_FILTERS };
     state.newsFilter = '';
+    state.kbSection = ''; state.kbQ = ''; state.kbOpen = new Map(); $('#kbQ').value = '';
     state.newsSeen = readSeen();
     state.newsMarks = new Set();
     $('#filters').classList.remove('is-open');
@@ -237,7 +245,7 @@
     try {
       applySync(await api('GET', 'sync', undefined, silent));
       syncUserControls();
-      if (!$('#clientDialog').open && !$('#newsDialog').open) renderCurrent();
+      if (!$('#clientDialog').open && !$('#newsDialog').open && !$('#kbDialog').open) renderCurrent();
     } catch (e) { if (!silent) fail(e); }
   }
 
@@ -297,6 +305,7 @@
     $('#viewResumen').hidden = v !== 'resumen';
     $('#viewClientes').hidden = v !== 'clientes';
     $('#viewNews').hidden = v !== 'news';
+    $('#viewKb').hidden = v !== 'kb';
     $('#viewChat').hidden = v !== 'chat';
     if (v === 'chat') chatEnter();
     $('#viewEquipo').hidden = v !== 'equipo';
@@ -312,6 +321,7 @@
     if (state.view === 'resumen') renderResumen();
     else if (state.view === 'clientes') renderClientes();
     else if (state.view === 'news') renderNews();
+    else if (state.view === 'kb') renderKb();
     else if (state.view === 'chat') renderChat();
     else renderEquipo();
     updateNewsBadge();
@@ -759,14 +769,29 @@
       : `📣 Tienes ${n} publicaciones nuevas en AppXnews. Ver ahora →`;
   }
 
-  /* Texto de la publicación → HTML seguro: párrafos, listas con «- » y enlaces http(s) */
+  /* Texto → HTML seguro: párrafos, listas con «- », listas numeradas «1. », tablas «| a | b |»
+     y enlaces http(s). Se usa en AppXnews y en el Centro comercial. */
   function richText(s) {
     const link = t => t.replace(/(https?:\/\/[^\s<]*[^\s<.,;:!?)\]])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+    const cell = t => link(esc(t.trim()));
+    const table = lines => {
+      const rows = lines
+        .map(l => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|'))
+        .filter(r => !r.every(c => /^\s*:?-{2,}:?\s*$/.test(c)));
+      if (!rows.length) return '';
+      const [head, ...body] = rows;
+      return '<div class="rt-scroll"><table class="rt"><thead><tr>' + head.map(c => `<th>${cell(c)}</th>`).join('') + '</tr></thead>' +
+        (body.length ? '<tbody>' + body.map(r => '<tr>' + r.map(c => `<td>${cell(c)}</td>`).join('') + '</tr>').join('') + '</tbody>' : '') +
+        '</table></div>';
+    };
     return String(s || '').split(/\n{2,}/).map(block => {
       const lines = block.split('\n').filter(l => l.trim() !== '');
       if (!lines.length) return '';
+      if (lines.every(l => /^\s*\|/.test(l))) return table(lines);
       if (lines.every(l => /^\s*[-•]\s+/.test(l)))
         return '<ul>' + lines.map(l => '<li>' + link(esc(l.replace(/^\s*[-•]\s+/, ''))) + '</li>').join('') + '</ul>';
+      if (lines.every(l => /^\s*\d+[.)]\s+/.test(l)))
+        return '<ol>' + lines.map(l => '<li>' + link(esc(l.replace(/^\s*\d+[.)]\s+/, ''))) + '</li>').join('') + '</ol>';
       return '<p>' + lines.map(l => link(esc(l))).join('<br>') + '</p>';
     }).join('');
   }
@@ -896,6 +921,255 @@
       renderNews();
       toast(on ? 'Los comerciales ya ven el ranking' : 'Ranking oculto para los comerciales');
     } catch (e) { ev.target.checked = !on; fail(e); }
+  }
+
+  /* ============================================================
+     CENTRO COMERCIAL (centro de conocimiento)
+     Todos lo leen; solo el administrador crea, edita, ordena y borra.
+     Secciones: qué vendemos, objeciones, FAQ, precios, descuentos (interno),
+     cierre de ventas y normativa. El buscador cruza todas a la vez.
+     ============================================================ */
+  const KB_SECTIONS = [
+    { id: 'servicios',  icon: '🧭', name: 'Qué vendemos',          sub: 'Servicios y diferenciales',
+      intro: 'Lo que ofrece AppXpand y en qué nos diferenciamos, para tenerlo claro antes de hablar con un cliente.', openAll: true },
+    { id: 'objeciones', icon: '💬', name: 'Objeciones',            sub: 'Respuestas comerciales',
+      intro: 'El objetivo no es enseñar a discutir con el cliente, sino ayudarte a entender qué hay detrás de cada objeción y responder con argumentos.', label: 'Respuesta recomendada' },
+    { id: 'faq',        icon: '❓', name: 'Preguntas frecuentes',  sub: 'Dudas de clientes',
+      intro: 'Preguntas que un cliente puede hacer durante una conversación comercial.' },
+    { id: 'precios',    icon: '💶', name: 'Precios y packs',       sub: 'Tarifas y condiciones',
+      intro: 'Consulta rápidamente qué puedes ofrecer.', openAll: true },
+    { id: 'descuentos', icon: '🔒', name: 'Descuentos',            sub: 'Normativa interna',
+      intro: 'Cuánto puedes bajar el precio y cuándo toca consultar a dirección.', internal: true, openAll: true },
+    { id: 'cierre',     icon: '🤝', name: 'Cierre de ventas',      sub: 'Proceso comercial',
+      intro: 'Cómo avanzar después de resolver las objeciones.', openAll: true },
+    { id: 'normas',     icon: '📋', name: 'Normativa',             sub: 'Reglas del equipo',
+      intro: 'Normas que nunca debemos olvidar.', openAll: true }
+  ];
+  const KB_BY = Object.fromEntries(KB_SECTIONS.map(x => [x.id, x]));
+  const KB_GROUPS = [
+    { id: 'precio',    label: 'Objeciones sobre el precio',                  short: 'Precio' },
+    { id: 'necesidad', label: 'Objeciones sobre la necesidad',               short: 'Necesidad' },
+    { id: 'confianza', label: 'Objeciones sobre confianza y funcionamiento', short: 'Confianza y funcionamiento' },
+    { id: 'otras',     label: 'Otras objeciones',                            short: 'Otras' }
+  ];
+  const secOf = e => (KB_BY[e.section] ? e.section : 'objeciones');
+  const grpOf = e => secOf(e) !== 'objeciones' ? '' : (KB_GROUPS.some(g => g.id === e.category) ? e.category : 'otras');
+  const sortKb = () => state.kb.sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.createdAt).localeCompare(String(b.createdAt)));
+  const kbSiblings = e => state.kb.filter(x => secOf(x) === secOf(e) && grpOf(x) === grpOf(e));
+
+  /* ---------- Buscador ----------
+     Pensado para escribir como se habla: «es caro» → quita las palabras vacías («es»), busca
+     «caro» y lo encuentra en el título, en las palabras clave que pone el admin o en el texto,
+     tolerando acentos, plurales y género. Ordena por lo bien que encaja cada entrada. */
+  const KB_STOP = new Set(('el la los las un una unos unas de del al a en y o u que es son soy ser esta este esto estan estoy me mi mis te tu ' +
+    'se lo le les nos por para con sin no si ya muy mas como pero hay tengo tiene tienen tener quiero puedo puede pueden podeis hacer hace hacen ' +
+    'dice dicen quiere dime cuando donde cual').split(' '));
+  const words = t => norm(t).split(/[^a-z0-9]+/).filter(Boolean);
+  const stemOf = t => (t.length >= 5 ? t.slice(0, -1) : t);
+  const wordHit = (w, t) => w.startsWith(stemOf(t)) || (w.length >= 3 && t.startsWith(w) && t.length - w.length <= 2);
+
+  function kbSearch(q) {
+    let toks = words(q);
+    const meaningful = toks.filter(t => !KB_STOP.has(t));
+    toks = [...new Set(meaningful.length ? meaningful : toks)];
+    if (!toks.length) return [];
+    const phrase = norm(q).replace(/\s+/g, ' ').trim();
+    const need = toks.length <= 2 ? 1 : Math.ceil(toks.length / 2);
+    const out = [];
+    state.kb.forEach((e, idx) => {
+      const sec = KB_BY[secOf(e)];
+      const grp = KB_GROUPS.find(g => g.id === grpOf(e));
+      const tw = words(e.question), kw = words(e.keywords || ''), bw = words(e.answer);
+      const sw = words(`${sec.name} ${sec.sub} ${grp ? grp.short : ''}`);
+      let score = 0, matched = 0, top = 0;
+      for (const t of toks) {
+        const s1 = tw.some(w => wordHit(w, t)) ? 6 : kw.some(w => wordHit(w, t)) ? 5 : sw.some(w => wordHit(w, t)) ? 3 : bw.some(w => wordHit(w, t)) ? 1.5 : 0;
+        if (s1) { matched++; score += s1; top = Math.max(top, s1); }
+      }
+      if (matched < need) return;
+      if (matched === toks.length) score += 4;
+      if (phrase.length > 2 && norm(e.question).includes(phrase)) score += 5;
+      if (phrase.length > 2 && norm(e.keywords || '').includes(phrase)) score += 4;
+      out.push({ e, score, top, idx });
+    });
+    out.sort((a, b) => b.score - a.score || a.idx - b.idx);
+    // si hay coincidencias claras, se descartan las que solo aparecen de pasada en el texto
+    const res = out.some(r => r.top >= 5) ? out.filter(r => r.top >= 3) : out;
+    return res.slice(0, 25).map(r => r.e);
+  }
+
+  /* ---------- Pintado ---------- */
+  function kbItemHTML(e, o) {
+    const sec = KB_BY[secOf(e)];
+    const id = esc(e.id);
+    const open = o.searching || (state.kbOpen.has(e.id) ? state.kbOpen.get(e.id) : !!sec.openAll);
+    const sibs = o.movable ? kbSiblings(e) : null;
+    const pos = sibs ? sibs.indexOf(e) : -1;
+    const edited = e.updatedAt && e.updatedAt !== e.createdAt;
+    return `<details class="kb-item${sec.internal ? ' is-internal' : ''}" data-id="${id}"${open ? ' open' : ''}>
+      <summary><span class="kb-item__t">${esc(e.question)}</span>${o.showSec ? `<span class="cat cat--kb">${sec.icon} ${esc(sec.name)}${sec.internal ? ' · interno' : ''}</span>` : ''}</summary>
+      <div class="kb-item__a">
+        ${sec.label ? `<p class="kb__label">${esc(sec.label)}</p>` : ''}
+        <div class="post__body">${richText(e.answer)}</div>
+      </div>
+      ${isAdmin() ? `<div class="kb-item__admin">
+        ${edited ? `<small class="muted" style="margin-right:auto">Editada ${fmtDT(e.updatedAt)}</small>` : ''}
+        ${sibs ? `<button type="button" class="btn btn--ghost btn--sm" data-kb-up="${id}" aria-label="Subir"${pos === 0 ? ' disabled' : ''}>↑</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-kb-down="${id}" aria-label="Bajar"${pos === sibs.length - 1 ? ' disabled' : ''}>↓</button>` : ''}
+        <button type="button" class="btn btn--ghost btn--sm" data-kb-edit="${id}">Editar</button>
+      </div>` : ''}
+    </details>`;
+  }
+
+  function renderKb() {
+    const q = state.kbQ.trim();
+    const searching = norm(q).length >= 2;
+    const out = $('#kbOut');
+
+    if (searching) {
+      const res = kbSearch(q);
+      out.innerHTML = res.length
+        ? `<p class="muted kb-count">${res.length} ${res.length === 1 ? 'resultado' : 'resultados'} para «${esc(q)}»</p>
+           <div class="kb-list">${res.map(e => kbItemHTML(e, { searching: true, showSec: true })).join('')}</div>`
+        : `<div class="card"><p class="empty">No hay resultados para «${esc(q)}». Prueba con otras palabras o consulta con dirección.</p></div>`;
+      return;
+    }
+
+    const sec = KB_BY[state.kbSection];
+    if (!sec) {   // portada: las secciones
+      out.innerHTML = '<div class="kb-tiles">' + KB_SECTIONS.map(x => {
+        const n = state.kb.filter(e => secOf(e) === x.id).length;
+        return `<button type="button" class="kb-tile" data-kb-sec="${x.id}">
+          ${x.internal ? '<span class="kb-tag">Interno</span>' : ''}
+          <span class="kb-tile__icon" aria-hidden="true">${x.icon}</span>
+          <strong>${esc(x.name)}</strong><small class="muted">${esc(x.sub)}</small>
+          <span class="kb-tile__n">${n} ${n === 1 ? 'entrada' : 'entradas'}</span></button>`;
+      }).join('') + '</div>';
+      return;
+    }
+
+    const list = state.kb.filter(e => secOf(e) === sec.id);
+    const opts = { searching: false, showSec: false, movable: isAdmin() };
+    let body;
+    if (!list.length) {
+      body = `<div class="card"><p class="empty">${isAdmin()
+        ? 'Esta sección está vacía. Pulsa «+ Nueva entrada» para añadir la primera.'
+        : 'Todavía no hay contenido en esta sección.'}</p></div>`;
+    } else if (sec.id === 'objeciones') {
+      body = KB_GROUPS.map(g => {
+        const items = list.filter(e => grpOf(e) === g.id);
+        return items.length ? `<h4 class="kb__group">${esc(g.label)}</h4><div class="kb-list">${items.map(e => kbItemHTML(e, opts)).join('')}</div>` : '';
+      }).join('');
+    } else {
+      body = `<div class="kb-list">${list.map(e => kbItemHTML(e, opts)).join('')}</div>`;
+    }
+    out.innerHTML = `<button type="button" class="kb-back" data-kb-home>← Todas las secciones</button>
+      <div class="kb-sechead"><h3>${sec.icon} ${esc(sec.name)}</h3><p class="muted">${esc(sec.intro)}</p></div>
+      ${sec.internal ? '<p class="kb-notice">🔒 Información interna y confidencial. Esta sección es exclusivamente para los comerciales: no debe compartirse con clientes.</p>' : ''}
+      ${body}`;
+  }
+
+  /* ---------- Editor (admin) ---------- */
+  const kdlg = () => $('#kbDialog');
+  let editingKb = null;
+
+  function kbEditorLabels() {
+    const sct = $('#kSection').value;
+    $('#kCatWrap').hidden = sct !== 'objeciones';
+    $('#kQuestionLbl').textContent = sct === 'objeciones' ? 'Objeción del cliente *' : sct === 'faq' ? 'Pregunta *' : 'Título *';
+    $('#kAnswerLbl').textContent = sct === 'objeciones' ? 'Respuesta recomendada *' : sct === 'faq' ? 'Respuesta *' : 'Contenido *';
+  }
+
+  function openKb(id) {
+    if (!isAdmin()) return;
+    const e = id ? state.kb.find(x => x.id === id) : null;
+    if (id && !e) return;
+    editingKb = id || null;
+    fillSelect($('#kSection'), KB_SECTIONS.map(x => [x.id, x.name]));
+    fillSelect($('#kCat'), KB_GROUPS.map(g => [g.id, g.short]));
+    $('#kbDlgTitle').textContent = e ? 'Editar entrada' : 'Nueva entrada';
+    $('#kbDlgSub').textContent = e ? `Creada el ${fmtDT(e.createdAt)}` : '';
+    $('#kSection').value = e ? secOf(e) : (state.kbSection || 'objeciones');
+    $('#kCat').value = e ? (grpOf(e) || 'otras') : 'precio';
+    $('#kQuestion').value = e ? e.question : '';
+    $('#kAnswer').value = e ? e.answer : '';
+    $('#kKeywords').value = e ? (e.keywords || '') : '';
+    $('#kbError').hidden = true;
+    $('#kbDelete').hidden = !e;
+    kbEditorLabels();
+    if (!kdlg().open) kdlg().showModal();
+    if (!e) $('#kQuestion').focus();
+  }
+  function closeKb() { if (kdlg().open) kdlg().close(); editingKb = null; }
+
+  async function saveKb(ev) {
+    ev.preventDefault();
+    const question = $('#kQuestion').value.trim();
+    const answer = $('#kAnswer').value.trim();
+    const err = $('#kbError');
+    if (!question || !answer) { err.textContent = !question ? 'Escribe el título.' : 'Escribe el contenido.'; err.hidden = false; return; }
+    err.hidden = true;
+    const payload = { question, answer, section: $('#kSection').value, category: $('#kCat').value, keywords: $('#kKeywords').value.trim() };
+    const btn = $('#kbForm button[type=submit]');
+    btn.disabled = true;
+    try {
+      const id = editingKb;
+      const e = id ? await api('PUT', `kb/${encodeURIComponent(id)}`, payload) : await api('POST', 'kb', payload);
+      const i = state.kb.findIndex(x => x.id === e.id);
+      if (i >= 0) state.kb[i] = e; else state.kb.push(e);
+      state.kbOpen.set(e.id, true);
+      state.kbSection = secOf(e);   // se te lleva a la sección donde ha quedado
+      sortKb();
+      closeKb();
+      renderCurrent();
+      toast(id ? 'Entrada actualizada' : 'Entrada añadida');
+    } catch (e) {
+      if (e.status >= 400 && e.status < 500 && !e.handled) { err.textContent = e.message; err.hidden = false; } else fail(e);
+    } finally { btn.disabled = false; }
+  }
+
+  async function deleteKb() {
+    const id = editingKb;
+    const e = state.kb.find(x => x.id === id);
+    if (!e) return;
+    if (!confirm(`¿Eliminar «${e.question}»? Dejará de verse para todo el equipo.`)) return;
+    try {
+      await api('DELETE', `kb/${encodeURIComponent(id)}`);
+      state.kb = state.kb.filter(x => x.id !== id);
+      state.kbOpen.delete(id);
+      closeKb();
+      renderCurrent();
+      toast('Entrada eliminada');
+    } catch (e2) { fail(e2); }
+  }
+
+  /* Sube/baja una entrada intercambiándola con la vecina de su mismo grupo */
+  async function moveKb(id, dir) {
+    const e = state.kb.find(x => x.id === id);
+    if (!e) return;
+    const sibs = kbSiblings(e);
+    const j = sibs.indexOf(e) + dir;
+    if (j < 0 || j >= sibs.length) return;
+    const ids = state.kb.map(x => x.id);
+    const a = ids.indexOf(e.id), b = ids.indexOf(sibs[j].id);
+    [ids[a], ids[b]] = [ids[b], ids[a]];
+    const prev = state.kb;
+    state.kb = ids.map(x => prev.find(f => f.id === x));   // se ve al instante…
+    renderKb();
+    try {
+      state.kb = await api('POST', 'kb/reorder', { ids }, true);   // …y se confirma con el servidor
+      renderKb();
+    } catch (err) { state.kb = prev; renderKb(); fail(err); }
+  }
+
+  async function loadKbSeed() {
+    if (!confirm('Se cargará el contenido base de AppXpand SOLO en las secciones del Centro comercial que estén vacías. No toca las que ya tienen contenido. ¿Continuar?')) return;
+    try {
+      const r = await api('POST', 'kb/seed');
+      state.kb = r.kb;
+      renderCurrent();
+      toast(r.added ? `Cargadas ${r.added} entradas` : 'No hay secciones vacías: no se ha cargado nada');
+    } catch (e) { fail(e); }
   }
 
   /* ============================================================
@@ -1251,6 +1525,31 @@
       const d = e.target.closest('[data-del]'); if (d) { deleteChatMsg(d.dataset.del); return; }
       if (e.target.closest('#chatMore')) loadOlder();
     });
+
+    // Centro comercial
+    $('#newKb').addEventListener('click', () => openKb(null));
+    $('#kbQ').addEventListener('input', e => { state.kbQ = e.target.value; renderKb(); });
+    $('#kbOut').addEventListener('click', e => {
+      const sec = e.target.closest('[data-kb-sec]'); if (sec) { state.kbSection = sec.dataset.kbSec; renderKb(); window.scrollTo({ top: 0 }); return; }
+      if (e.target.closest('[data-kb-home]')) { state.kbSection = ''; renderKb(); window.scrollTo({ top: 0 }); return; }
+      const ed = e.target.closest('[data-kb-edit]'); if (ed) { openKb(ed.dataset.kbEdit); return; }
+      const up = e.target.closest('[data-kb-up]'); if (up) { moveKb(up.dataset.kbUp, -1); return; }
+      const dn = e.target.closest('[data-kb-down]'); if (dn) moveKb(dn.dataset.kbDown, 1);
+    });
+    // «toggle» no burbujea: se escucha en captura para recordar qué entradas abre o cierra cada uno
+    $('#kbOut').addEventListener('toggle', e => {
+      const d = e.target;
+      if (!d.classList || !d.classList.contains('kb-item') || norm(state.kbQ.trim()).length >= 2) return;
+      state.kbOpen.set(d.dataset.id, d.open);
+    }, true);
+    $('#kSection').addEventListener('change', kbEditorLabels);
+    $('#kbForm').addEventListener('submit', saveKb);
+    $('#kbDlgClose').addEventListener('click', closeKb);
+    $('#kbCancel').addEventListener('click', closeKb);
+    $('#kbDelete').addEventListener('click', deleteKb);
+    $('#loadKb').addEventListener('click', loadKbSeed);
+    kdlg().addEventListener('click', e => { if (e.target === kdlg()) closeKb(); });
+    kdlg().addEventListener('close', () => { editingKb = null; });
 
     // AppXnews
     $('#newPost').addEventListener('click', () => openPost(null));
