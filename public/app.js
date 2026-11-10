@@ -497,6 +497,19 @@
     return `<div class="board">${cols}</div>`;
   }
 
+  /* ---------- Modo oscuro ---------- */
+  const curTheme = () => document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  function setTheme(t, noSave) {
+    document.documentElement.setAttribute('data-theme', t);
+    if (!noSave) { try { localStorage.setItem('appxpand_theme', t); } catch (e) { /* sin almacenamiento */ } }
+    document.querySelectorAll('[data-theme-toggle]').forEach(b => {
+      b.textContent = t === 'dark' ? '☀' : '☾';
+      b.setAttribute('aria-label', t === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro');
+      b.title = b.getAttribute('aria-label');
+    });
+    const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = t === 'dark' ? '#0a1224' : '#0b1b3a';
+  }
+
   /* ============================================================
      CHAT INTERNO · General + conversación privada admin ↔ comercial
      Sin conexión permanente: la pantalla pregunta al servidor cada pocos segundos
@@ -1172,6 +1185,8 @@
       const i = $('#code'); i.type = i.type === 'password' ? 'text' : 'password';
     });
     $('#logoutBtn').addEventListener('click', () => logout());
+    document.querySelectorAll('[data-theme-toggle]').forEach(b => b.addEventListener('click', () => setTheme(curTheme() === 'dark' ? 'light' : 'dark')));
+    setTheme(curTheme(), true);
 
     $('#tabs').addEventListener('click', e => {
       const b = e.target.closest('button[data-view]'); if (b) switchView(b.dataset.view);
