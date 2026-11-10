@@ -10,6 +10,7 @@
   'use strict';
 
   const CFG = window.CRM_CONFIG || {};
+  const BASE_TITLE = document.title;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -55,7 +56,8 @@
     settings: { showRanking: true },
     newsFilter: '',
     newsSeen: '',
-    newsMarks: new Set()
+    newsMarks: new Set(),
+    chat: freshChat()
   };
   const isAdmin = () => !!state.user && state.user.role === 'admin';
 
@@ -97,8 +99,9 @@
     constructor(status, message, handled = false) { super(message); this.status = status; this.handled = handled; }
   }
   let busy = 0;
-  async function api(method, path, body) {
-    busy++; document.body.classList.add('busy');
+  /* quiet = true → no enseña la barra de carga (sondeos en segundo plano) */
+  async function api(method, path, body, quiet) {
+    if (!quiet) { busy++; document.body.classList.add('busy'); }
     try {
       let res;
       try {
@@ -123,7 +126,7 @@
       }
       return data;
     } finally {
-      if (--busy <= 0) { busy = 0; document.body.classList.remove('busy'); }
+      if (!quiet && --busy <= 0) { busy = 0; document.body.classList.remove('busy'); }
     }
   }
   const fail = e => { if (!e.handled) toast(e.message || 'Algo ha fallado.'); };
@@ -179,6 +182,7 @@
     if ($('#newsDialog').open) $('#newsDialog').close();
     state.token = null; state.user = null; state.users = []; state.data = { clients: [] }; state.editingId = null;
     state.posts = []; state.ranking = null; state.newsMarks = new Set();
+    clearTimeout(chatTimer); state.chat = freshChat(); document.title = BASE_TITLE;
     $('#appView').hidden = true;
     $('#loginView').hidden = false;
     showLoginError(typeof msg === 'string' ? msg : '');
@@ -224,12 +228,14 @@
     syncUserControls();
     switchView('resumen');
     startPolling();
+    state.chat = freshChat();
+    pollChat();
   }
 
   async function refresh(silent) {
     if (!state.token) return;
     try {
-      applySync(await api('GET', 'sync'));
+      applySync(await api('GET', 'sync', undefined, silent));
       syncUserControls();
       if (!$('#clientDialog').open && !$('#newsDialog').open) renderCurrent();
     } catch (e) { if (!silent) fail(e); }
@@ -291,11 +297,14 @@
     $('#viewResumen').hidden = v !== 'resumen';
     $('#viewClientes').hidden = v !== 'clientes';
     $('#viewNews').hidden = v !== 'news';
+    $('#viewChat').hidden = v !== 'chat';
+    if (v === 'chat') chatEnter();
     $('#viewEquipo').hidden = v !== 'equipo';
     $$('#tabs button').forEach(b => {
       if (b.dataset.view === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
     });
     renderCurrent();
+    scheduleChat();
     window.scrollTo({ top: 0 });
   }
   function renderCurrent() {
@@ -303,6 +312,7 @@
     if (state.view === 'resumen') renderResumen();
     else if (state.view === 'clientes') renderClientes();
     else if (state.view === 'news') renderNews();
+    else if (state.view === 'chat') renderChat();
     else renderEquipo();
     updateNewsBadge();
   }
@@ -485,6 +495,211 @@
         <div class="col__list">${cards}</div></section>`;
     }).join('');
     return `<div class="board">${cols}</div>`;
+  }
+
+  /* ============================================================
+     CHAT INTERNO · General + conversación privada admin ↔ comercial
+     Sin conexión permanente: la pantalla pregunta al servidor cada pocos segundos
+     (5 s con el chat abierto, 45 s si estás en otra pestaña, nada si la ventana está oculta).
+     ============================================================ */
+  function freshChat() { return { channels: [], open: '', msgs: {}, cursor: {}, more: {}, loaded: {}, total: 0, sig: '' }; }
+
+  let chatTimer = null;
+  let chatBusy = false;
+  let chatAgain = false;
+  const wide = () => window.matchMedia('(min-width: 900px)').matches;
+  const chatOpenNow = () => state.view === 'chat' && !document.hidden;
+
+  const chatHM = ts => new Date(ts).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  const chatWhen = ts => new Date(ts).toDateString() === new Date().toDateString()
+    ? chatHM(ts) : new Date(ts).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+  function chatDay(ts) {
+    const d = new Date(ts).toDateString();
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    if (d === new Date().toDateString()) return 'Hoy';
+    if (d === y.toDateString()) return 'Ayer';
+    return new Date(ts).toLocaleDateString('es-ES', { day: 'numeric', month: 'long' });
+  }
+  const chatText = s => esc(s)
+    .replace(/(https?:\/\/[^\s<]*[^\s<.,;:!?)\]])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/\n/g, '<br>');
+  function sortChannels(list) {
+    const rest = list.filter(c => c.kind !== 'general').sort((a, b) => b.lastTs - a.lastTs || a.name.localeCompare(b.name, 'es'));
+    return [...list.filter(c => c.kind === 'general'), ...rest];
+  }
+
+  function scheduleChat() {
+    clearTimeout(chatTimer);
+    if (!state.user || document.hidden) return;
+    chatTimer = setTimeout(pollChat, state.view === 'chat' ? 5000 : 45000);
+  }
+
+  function applyChatEvents(id, events) {
+    const list = state.chat.msgs[id] || (state.chat.msgs[id] = []);
+    for (const ev of events) {
+      if (ev.type === 'msg') { if (!list.some(m => m.id === ev.id)) list.push(ev); }
+      else if (ev.type === 'del') { const i = list.findIndex(m => m.id === ev.target); if (i >= 0) list.splice(i, 1); }
+    }
+    list.sort((a, b) => (a.id < b.id ? -1 : 1));
+  }
+
+  function updateChatBadge() {
+    const n = state.chat.total;
+    const b = $('#chatBadge');
+    b.hidden = !n; b.textContent = n;
+    document.title = (n ? `(${n}) ` : '') + BASE_TITLE;
+  }
+
+  async function pollChat() {
+    if (!state.user) return;
+    if (chatBusy) { chatAgain = true; return; }
+    chatBusy = true;
+    const c = state.chat;
+    let again = false;
+    try {
+      const open = chatOpenNow() ? c.open : '';
+      const hadCursor = !!(open && c.cursor[open]);
+      let q = '';
+      if (open) { q = '?open=' + encodeURIComponent(open); if (hadCursor) q += '&after=' + encodeURIComponent(c.cursor[open]); }
+      const r = await api('GET', 'chat/poll' + q, undefined, true);
+      if (!state.user || c !== state.chat) return;
+
+      c.channels = sortChannels(r.channels);
+      if (r.open && r.open.id === c.open) {
+        const id = r.open.id;
+        if (!hadCursor) { c.msgs[id] = []; c.more[id] = !!r.open.hasMore; }
+        applyChatEvents(id, r.open.events);
+        if (r.open.cursor) c.cursor[id] = r.open.cursor;
+        c.loaded[id] = true;
+      }
+      if (!c.open && wide() && state.view === 'chat' && c.channels.length) { c.open = c.channels[0].id; again = true; }
+      c.total = c.channels.reduce((n, ch) => n + (ch.id === c.open && chatOpenNow() ? 0 : ch.unread), 0);
+      updateChatBadge();
+      if (state.view === 'chat') renderChat();
+    } catch (e) { /* silencioso: se reintenta en el siguiente ciclo */ }
+    finally {
+      chatBusy = false;
+      const redo = again || chatAgain;
+      chatAgain = false;
+      scheduleChat();
+      if (redo) pollChat();
+    }
+  }
+
+  function chatEnter() {
+    const c = state.chat;
+    if (!c.open && wide() && c.channels.length) c.open = c.channels[0].id;
+    $('#chatHint').textContent = isAdmin()
+      ? 'Canal general del equipo y conversación privada con cada comercial.'
+      : 'Canal general del equipo y conversación privada con administración.';
+    pollChat();
+  }
+
+  function openChannel(id) {
+    const c = state.chat;
+    c.open = id; c.sig = '';
+    renderChat();
+    pollChat();
+    if (wide()) $('#chatInput').focus();
+  }
+
+  function renderChat() {
+    const c = state.chat;
+    $('#chat').classList.toggle('is-thread', !!c.open);
+    $('#chatList').innerHTML = c.channels.length
+      ? c.channels.map(ch => `<button type="button" class="chat-item${ch.id === c.open ? ' is-active' : ''}" data-chan="${esc(ch.id)}">
+          <span class="avatar chat-av">${ch.kind === 'general' ? '#' : esc(initials(ch.name))}</span>
+          <span class="chat-item__txt"><strong>${esc(ch.name)}</strong><small>${ch.kind === 'general' ? 'Todo el equipo' : 'Privado'}${ch.lastTs ? ' · ' + chatWhen(ch.lastTs) : ''}</small></span>
+          ${ch.unread && ch.id !== c.open ? `<span class="tab-badge">${ch.unread}</span>` : ''}</button>`).join('')
+      : '<p class="empty">Cargando conversaciones…</p>';
+
+    const ch = c.channels.find(x => x.id === c.open);
+    $('#chatTitle').textContent = ch ? ch.name : '';
+    $('#chatSub').textContent = !ch ? '' : ch.kind === 'general' ? 'Todo el equipo'
+      : isAdmin() ? 'Conversación privada' : 'Conversación privada con administración';
+    $('#chatForm').hidden = !ch;
+    renderChatMsgs();
+  }
+
+  function renderChatMsgs() {
+    const c = state.chat;
+    const box = $('#chatMsgs');
+    if (!c.open) { c.sig = ''; box.innerHTML = '<p class="empty chat__empty">Elige una conversación.</p>'; return; }
+    const list = c.msgs[c.open] || [];
+    const sig = [c.open, list.length, list.at(-1) ? list.at(-1).id : '', c.more[c.open] ? 1 : 0, c.loaded[c.open] ? 1 : 0].join('|');
+    if (sig === c.sig) return;
+    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 90 || c.sig.split('|')[0] !== c.open;
+    c.sig = sig;
+
+    let html = c.more[c.open] ? '<button type="button" class="chat__more" id="chatMore">Cargar mensajes anteriores</button>' : '';
+    let prev = null;
+    for (const m of list) {
+      const day = new Date(m.ts).toDateString();
+      const sameDay = prev && new Date(prev.ts).toDateString() === day;
+      if (!sameDay) html += `<div class="chat__day">${chatDay(m.ts)}</div>`;
+      const mine = m.from === state.user.id;
+      const cont = sameDay && prev.from === m.from && m.ts - prev.ts < 5 * 60e3;
+      const canDel = mine || isAdmin();
+      html += `<div class="msg${mine ? ' msg--me' : ''}${cont ? ' msg--cont' : ''}">
+        ${!mine && !cont ? `<span class="msg__name">${esc(m.fromName)}${m.fromRole === 'admin' ? ' <em>Admin</em>' : ''}</span>` : ''}
+        <div class="msg__text">${chatText(m.text)}</div>
+        <span class="msg__meta"><time>${chatHM(m.ts)}</time>${canDel ? `<button type="button" class="msg__del" data-del="${esc(m.id)}" aria-label="Borrar mensaje">✕</button>` : ''}</span>
+      </div>`;
+      prev = m;
+    }
+    if (!list.length) html += `<p class="empty chat__empty">${c.loaded[c.open] ? 'Aún no hay mensajes. ¡Escribe el primero!' : 'Cargando mensajes…'}</p>`;
+    box.innerHTML = html;
+    if (near) box.scrollTop = box.scrollHeight;
+  }
+
+  async function sendChat(ev) {
+    ev.preventDefault();
+    const c = state.chat;
+    const input = $('#chatInput');
+    const text = input.value.trim();
+    if (!text || !c.open) return;
+    const id = c.open;
+    const btn = $('#chatForm button[type=submit]');
+    btn.disabled = true;
+    try {
+      const m = await api('POST', 'chat/send', { channel: id, text }, true);
+      input.value = ''; input.style.height = '';
+      applyChatEvents(id, [m]);
+      c.sig = '';
+      renderChat();
+      const box = $('#chatMsgs'); box.scrollTop = box.scrollHeight;
+      input.focus();
+      pollChat();
+    } catch (e) { fail(e); } finally { btn.disabled = false; }
+  }
+
+  async function loadOlder() {
+    const c = state.chat;
+    const id = c.open;
+    const first = (c.msgs[id] || [])[0];
+    if (!first) return;
+    try {
+      const r = await api('GET', `chat/history?channel=${encodeURIComponent(id)}&before=${encodeURIComponent(first.id)}`, undefined, true);
+      const box = $('#chatMsgs');
+      const h = box.scrollHeight;
+      applyChatEvents(id, r.events);
+      c.more[id] = !!r.hasMore;
+      c.sig = '';
+      renderChatMsgs();
+      box.scrollTop = box.scrollHeight - h;
+    } catch (e) { fail(e); }
+  }
+
+  async function deleteChatMsg(msgId) {
+    const c = state.chat;
+    const id = c.open;
+    if (!confirm('¿Borrar este mensaje para todos?')) return;
+    try {
+      await api('DELETE', `chat/${encodeURIComponent(id)}/${encodeURIComponent(msgId)}`, undefined, true);
+      c.msgs[id] = (c.msgs[id] || []).filter(m => m.id !== msgId);
+      c.sig = '';
+      renderChat();
+    } catch (e) { fail(e); }
   }
 
   /* ============================================================
@@ -1009,6 +1224,19 @@
     $('#loadDemo').addEventListener('click', loadDemo);
     $('#wipeAll').addEventListener('click', wipeAll);
 
+    // Chat
+    $('#chatList').addEventListener('click', e => { const b = e.target.closest('[data-chan]'); if (b) openChannel(b.dataset.chan); });
+    $('#chatBack').addEventListener('click', () => { state.chat.open = ''; state.chat.sig = ''; renderChat(); });
+    $('#chatForm').addEventListener('submit', sendChat);
+    $('#chatInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey && !window.matchMedia('(pointer: coarse)').matches) { e.preventDefault(); sendChat(e); }
+    });
+    $('#chatInput').addEventListener('input', e => { const t = e.target; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight + 2, 120) + 'px'; });
+    $('#chatMsgs').addEventListener('click', e => {
+      const d = e.target.closest('[data-del]'); if (d) { deleteChatMsg(d.dataset.del); return; }
+      if (e.target.closest('#chatMore')) loadOlder();
+    });
+
     // AppXnews
     $('#newPost').addEventListener('click', () => openPost(null));
     $('#newsList').addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (b) openPost(b.dataset.edit); });
@@ -1033,7 +1261,12 @@
     dlg().addEventListener('close', () => { state.editingId = null; });
 
     // Al volver a la pestaña, traer lo último
-    document.addEventListener('visibilitychange', () => { if (!document.hidden && state.user && !busy) refresh(true); });
+    document.addEventListener('visibilitychange', () => {
+      if (!state.user) return;
+      if (document.hidden) { clearTimeout(chatTimer); return; }
+      if (!busy) refresh(true);
+      pollChat();
+    });
   }
 
   /* ---------- Arranque ---------- */

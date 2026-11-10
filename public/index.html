@@ -60,6 +60,7 @@
         <button type="button" data-view="resumen">Resumen</button>
         <button type="button" data-view="clientes">Clientes</button>
         <button type="button" data-view="news">AppXnews <span class="tab-badge" id="newsBadge" hidden>0</span></button>
+        <button type="button" data-view="chat">Chat <span class="tab-badge" id="chatBadge" hidden>0</span></button>
         <button type="button" data-view="equipo" data-admin>Equipo</button>
       </nav>
     </div>
@@ -159,6 +160,30 @@
 
       <div class="chips" id="newsChips" role="group" aria-label="Filtrar publicaciones"></div>
       <div id="newsList" class="news-list"></div>
+    </section>
+
+    <!-- CHAT -->
+    <section id="viewChat" aria-labelledby="chatH" hidden>
+      <div class="sec-head sec-head--tight">
+        <div>
+          <h2 id="chatH">Chat</h2>
+          <p class="muted" id="chatHint"></p>
+        </div>
+      </div>
+      <div class="chat" id="chat">
+        <aside class="chat__list" id="chatList" aria-label="Conversaciones"></aside>
+        <section class="chat__thread" aria-label="Mensajes">
+          <header class="chat__head">
+            <button type="button" class="icon-btn chat__back" id="chatBack" aria-label="Volver a las conversaciones">←</button>
+            <div><strong id="chatTitle"></strong><small id="chatSub" class="muted"></small></div>
+          </header>
+          <div class="chat__msgs" id="chatMsgs" role="log" aria-live="polite"></div>
+          <form class="chat__form" id="chatForm" autocomplete="off">
+            <textarea id="chatInput" rows="1" maxlength="1000" placeholder="Escribe un mensaje…" aria-label="Mensaje"></textarea>
+            <button class="btn btn--primary" type="submit">Enviar</button>
+          </form>
+        </section>
+      </div>
     </section>
 
     <!-- EQUIPO (admin) -->
