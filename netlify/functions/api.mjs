@@ -9,6 +9,7 @@
    ============================================================ */
 import { getStore } from '@netlify/blobs';
 import { createHash, createHmac, timingSafeEqual, randomInt, randomUUID } from 'node:crypto';
+import { KB_SEED } from './kb-seed.mjs';
 
 export const config = { path: '/api/*' };
 
@@ -18,6 +19,9 @@ const SERVICES = ['Página web', 'Optimización de perfil de Google', 'Paquete l
 const CITIES = ['Albacete', 'Ciudad Real', 'Alicante', 'Otra'];
 const NEWS_CATS = ['aviso', 'novedad', 'info', 'top'];
 const MAX_POSTS = 200;
+const KB_SECTIONS = ['servicios', 'objeciones', 'faq', 'precios', 'descuentos', 'cierre', 'normas'];
+const KB_GROUPS = ['precio', 'necesidad', 'confianza', 'otras'];   // solo para la sección «objeciones»
+const MAX_KB = 300;
 const ADMIN = { id: 'admin', name: 'Admin', role: 'admin' };
 
 // Mes natural en hora de España (para el ranking mensual)
@@ -356,6 +360,92 @@ async function updatePost(req, id, db) {
   return json(p);
 }
 
+/* ---------- Centro de conocimiento (objeciones, FAQ, precios, descuentos…) ----------
+   Cada entrada es un archivo «q/<id>» con: section, category (solo objeciones),
+   question (título), answer, keywords (sinónimos para el buscador) y order.
+   Todos los usuarios las leen (van dentro de /api/sync); solo el admin las edita. */
+async function allKb(db) {
+  const { blobs } = await db.list({ prefix: 'q/' });
+  const list = (await Promise.all(blobs.map(b => db.get(b.key, { type: 'json' })))).filter(Boolean);
+  return list
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.createdAt).localeCompare(String(b.createdAt)))
+    .slice(0, MAX_KB);
+}
+
+function cleanKb(b) {
+  const question = str(b.question, 200);
+  if (!question) throw new HttpError(400, 'Escribe el título de la entrada.');
+  const answer = String(b.answer ?? '').replace(/\r\n/g, '\n').trim().slice(0, 4000);
+  if (!answer) throw new HttpError(400, 'Escribe el contenido de la entrada.');
+  const section = KB_SECTIONS.includes(b.section) ? b.section : 'objeciones';
+  const category = section === 'objeciones' ? (KB_GROUPS.includes(b.category) ? b.category : 'otras') : '';
+  return { question, answer, section, category, keywords: str(b.keywords, 300) };
+}
+
+async function createKb(req, user, db) {
+  const f = cleanKb(await readBody(req));
+  const list = await allKb(db);
+  if (list.length >= MAX_KB) throw new HttpError(400, `Has llegado al máximo de ${MAX_KB} entradas.`);
+  const t = now();
+  const q = {
+    id: 'q' + randomUUID().replace(/-/g, '').slice(0, 16), ...f,
+    order: list.reduce((m, x) => Math.max(m, x.order ?? 0), -1) + 1,
+    author: user.id, createdAt: t, updatedAt: t
+  };
+  await db.setJSON('q/' + q.id, q);
+  return json(q, 201);
+}
+
+async function updateKb(req, id, db) {
+  if (!isId(id)) throw new HttpError(404, 'Entrada no encontrada.');
+  const cur = await db.get('q/' + id, { type: 'json' });
+  if (!cur) throw new HttpError(404, 'Entrada no encontrada.');
+  const q = { ...cur, ...cleanKb(await readBody(req)), updatedAt: now() };
+  await db.setJSON('q/' + id, q);
+  return json(q);
+}
+
+/* Recibe la lista completa de ids en el orden deseado y renumera. Si falta alguna
+   (creada a la vez desde otro dispositivo) se queda al final. */
+async function reorderKb(req, db) {
+  const b = await readBody(req);
+  if (!Array.isArray(b.ids)) throw new HttpError(400, 'Formato no válido.');
+  const list = await allKb(db);
+  const byId = new Map(list.map(f => [f.id, f]));
+  const seq = [...new Set(b.ids.filter(isId))].filter(id => byId.has(id));
+  const rest = list.map(f => f.id).filter(id => !seq.includes(id));
+  await Promise.all([...seq, ...rest].map((id, i) => {
+    const f = byId.get(id);
+    return f.order === i ? null : db.setJSON('q/' + id, { ...f, order: i });
+  }));
+  return json(await allKb(db));
+}
+
+/* Contenido base (kb-seed.mjs): solo rellena las secciones que estén VACÍAS, así que nunca
+   pisa ni duplica lo que ya hayas escrito. Los ids son fijos → repetirlo es inofensivo. */
+async function seedKb(db) {
+  const list = await allKb(db);
+  const filled = new Set(list.map(e => e.section || 'objeciones'));
+  const t = now();
+  const first = list.reduce((m, x) => Math.max(m, x.order ?? 0), -1) + 1;
+  const todo = KB_SEED.filter(e => !filled.has(e.section));
+  await Promise.all(todo.map((e, i) =>
+    db.setJSON('q/' + e.id, { ...e, order: first + i, author: 'admin', createdAt: t, updatedAt: t })));
+  await db.setJSON('s/kb-seeded', { at: t });
+  return todo.length;
+}
+
+/* La primera vez que alguien entra y no hay nada, se carga el contenido base. Después, si
+   borras entradas a propósito, no vuelve a aparecer solo. */
+async function loadKb(db) {
+  let list = await allKb(db);
+  if (!list.length && !(await db.get('s/kb-seeded', { type: 'json' }))) {
+    await seedKb(db);
+    list = await allKb(db);
+  }
+  return list;
+}
+
 async function getSettings(db) {
   const s = await db.get('s/settings', { type: 'json' });
   return { showRanking: s ? s.showRanking !== false : true };
@@ -518,16 +608,18 @@ export default async (req, ctx) => {
     if (res === 'sync' && m === 'GET') {
       const settings = await getSettings(db);
       const wantRanking = admin || settings.showRanking;
-      const [users, clients, posts] = await Promise.all([
+      const [users, clients, posts, kb] = await Promise.all([
         wantRanking ? listUsers(db) : [],
         allClients(db),
-        allPosts(db)
+        allPosts(db),
+        loadKb(db)
       ]);
       return json({
         user,
         users: admin ? [ADMIN, ...users] : [user],
         clients: admin ? clients : clients.filter(c => c.owner === user.id),
         posts,
+        kb,
         settings,
         ranking: wantRanking ? buildRanking(clients, users, admin) : null
       });
@@ -540,6 +632,19 @@ export default async (req, ctx) => {
         needAdmin();
         if (!isId(id)) throw new HttpError(404, 'Publicación no encontrada.');
         await db.delete('n/' + id);
+        return json({ ok: true });
+      }
+    }
+
+    if (res === 'kb') {
+      needAdmin();
+      if (!id && m === 'POST') return await createKb(req, user, db);
+      if (id === 'reorder' && !sub && m === 'POST') return await reorderKb(req, db);
+      if (id === 'seed' && !sub && m === 'POST') { const added = await seedKb(db); return json({ added, kb: await allKb(db) }); }
+      if (id && !sub && m === 'PUT') return await updateKb(req, id, db);
+      if (id && !sub && m === 'DELETE') {
+        if (!isId(id)) throw new HttpError(404, 'Entrada no encontrada.');
+        await db.delete('q/' + id);
         return json({ ok: true });
       }
     }
