@@ -15,6 +15,59 @@
 const E = (id, section, category, question, answer, keywords = '') =>
   ({ id: 'seed-' + id, section, category, question, answer, keywords });
 
+/* ---------- Precios de páginas web (catálogo comercial 2026) ----------
+   Van al principio de «Precios y packs». También se aplican una sola vez a los paneles que
+   ya tenían contenido (ver KB_PATCHES al final y applyKbPatches en api.mjs). */
+const WEB_PRICES = [
+  E('pre-web-0', 'precios', '', 'Páginas web · precios (pago único)',
+`| Web | Precio | Qué incluye |
+| Web Básico | 337 € | Landing page |
+| Pack Inicial | 649 € | Web corporativa de hasta 3 pestañas |
+| Pack Pro | 1.189 € | Hasta 6 pestañas, asistente de IA y métricas |
+
+- Pago único por proyecto.
+- El mantenimiento mensual es opcional y se contrata aparte.
+- Los dominios y servicios de terceros no están incluidos salvo que se indique.
+- El posicionamiento local suele tardar entre 1 y 3 meses en notarse: conviene decirlo al cliente desde el principio.`,
+    'precio web, cuánto cuesta una web, página web, tarifa, landing, web básico, pack inicial, pack pro, 337, 649, 1189, 1.189, pago único, presupuesto'),
+
+  E('pre-web-1', 'precios', '', 'Web Básico · 337 € (pago único)',
+`Landing page optimizada con un único objetivo: que el cliente contacte.
+
+- Llamada a la acción (CTA) clara y visible.
+- Formulario de contacto con aviso de nueva solicitud por email.
+- Botones de llamada y WhatsApp en móvil.
+- Mapa con la ubicación y horarios.
+- Diseño adaptado a móvil, tablet y ordenador.
+- Carga rápida y SEO local básico.
+- Publicación y puesta en marcha incluidas.`,
+    'precio web, landing, landing page, web básico, 337, una página, sencilla, barata, económica, whatsapp, formulario, mapa, pago único'),
+
+  E('pre-web-2', 'precios', '', 'Pack Inicial · 649 € (pago único)',
+`Web corporativa. Incluye todo lo de Web Básico y además:
+
+- Web corporativa de hasta 3 pestañas (inicio, servicios, contacto).
+- Textos legales RGPD: aviso legal, privacidad y cookies.
+- Banner de cookies conforme a la normativa.
+- Optimización SEO: títulos, descripciones, estructura y palabras clave locales.
+- Alta en Google Search Console y envío del mapa del sitio.
+- Alta y optimización básica de la ficha de Google.
+- Textos de la web redactados con enfoque comercial.`,
+    'precio web, web corporativa, pack inicial, 649, tres pestañas, 3 pestañas, rgpd, legal, cookies, seo, search console, ficha de google, google maps, pago único'),
+
+  E('pre-web-3', 'precios', '', 'Pack Pro · 1.189 € (pago único)',
+`Web completa con asistente de IA y métricas. Incluye todo lo de Pack Inicial y además:
+
+- Asistente de IA 24 horas en la web: responde dudas y recoge contactos.
+- Métricas de seguimiento mensuales: visitas, llamadas, formularios y rutas.
+- Informe mensual claro, sin tecnicismos.
+- Ficha de Google optimizada a fondo, con estudio de la competencia.
+- Tarjeta de reseñas con QR para el mostrador.
+- Hasta 6 pestañas en la web.
+- Formación de 30 minutos para gestionar contactos y mensajes.`,
+    'precio web, pack pro, 1189, 1.189, web completa, asistente ia, inteligencia artificial, chatbot, métricas, informe, reseñas, qr, seis pestañas, 6 pestañas, formación, pago único')
+];
+
 export const KB_SEED = [
   /* ---------- 1 · Qué vendemos ---------- */
   E('srv-1', 'servicios', '', '¿Qué es AppXpand?',
@@ -115,6 +168,8 @@ No tienen por qué competir: pueden complementarse.`,
   E('faq-12', 'faq', '', '¿Las horas de desarrollo se acumulan?', 'No, las horas se renuevan mensualmente y no son acumulables.', 'horas, desarrollo, acumulables, acumular, renuevan, mensual'),
 
   /* ---------- 2 · Precios y packs ---------- */
+  ...WEB_PRICES,
+
   E('pre-1', 'precios', '', 'Mantenimiento Básico · 39,99 €/mes',
 `- Mantenimiento básico de la web.
 - Supervisión y conservación del funcionamiento.
@@ -214,4 +269,11 @@ Juanje revisa lo contratado y pasa a la fase de toma de requerimientos con el cl
 - No confirmes una fecha de entrega sin validarla.
 - Prioriza siempre la satisfacción del cliente y la rentabilidad del proyecto.`,
     'normas, reglas, prohibido, no prometer, plazos, seo, soporte, descuentos, costes, entrega')
+];
+
+/* Novedades que se añaden UNA sola vez a los paneles que ya tienen contenido (la «key» queda
+   marcada al aplicarlas, así que si luego borras una entrada no vuelve). Van al principio de
+   su sección. Para añadir más en el futuro: nuevo objeto con otra key. */
+export const KB_PATCHES = [
+  { key: 'webs-2026-11', entries: WEB_PRICES }
 ];

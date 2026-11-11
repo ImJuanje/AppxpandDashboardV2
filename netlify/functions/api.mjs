@@ -9,7 +9,7 @@
    ============================================================ */
 import { getStore } from '@netlify/blobs';
 import { createHash, createHmac, timingSafeEqual, randomInt, randomUUID } from 'node:crypto';
-import { KB_SEED } from './kb-seed.mjs';
+import { KB_SEED, KB_PATCHES } from './kb-seed.mjs';
 
 export const config = { path: '/api/*' };
 
@@ -443,7 +443,25 @@ async function loadKb(db) {
     await seedKb(db);
     list = await allKb(db);
   }
+  if (await applyKbPatches(db, list)) list = await allKb(db);
   return list;
+}
+
+/* Novedades de contenido (KB_PATCHES): se añaden una sola vez por «key» y quedan marcadas,
+   así no pisan nada y, si las borras, no vuelven. Entran al principio de su sección. */
+async function applyKbPatches(db, list) {
+  let changed = false;
+  const have = new Set(list.map(e => e.id));
+  for (const p of KB_PATCHES) {
+    const flag = 's/kb-patch-' + p.key;
+    if (await db.get(flag, { type: 'json' })) continue;
+    const t = now();
+    await Promise.all(p.entries.filter(e => !have.has(e.id)).map((e, i) =>
+      db.setJSON('q/' + e.id, { ...e, order: -100 + i, author: 'admin', createdAt: t, updatedAt: t })));
+    await db.setJSON(flag, { at: t });
+    changed = true;
+  }
+  return changed;
 }
 
 async function getSettings(db) {
