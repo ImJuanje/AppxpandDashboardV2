@@ -451,13 +451,20 @@ async function loadKb(db) {
    así no pisan nada y, si las borras, no vuelven. Entran al principio de su sección. */
 async function applyKbPatches(db, list) {
   let changed = false;
-  const have = new Set(list.map(e => e.id));
+  const byId = new Map(list.map(e => [e.id, e]));
   for (const p of KB_PATCHES) {
     const flag = 's/kb-patch-' + p.key;
     if (await db.get(flag, { type: 'json' })) continue;
-    const t = now();
-    await Promise.all(p.entries.filter(e => !have.has(e.id)).map((e, i) =>
-      db.setJSON('q/' + e.id, { ...e, order: -100 + i, author: 'admin', createdAt: t, updatedAt: t })));
+    const t = now(), base = p.base ?? -100;
+    await Promise.all((p.entries || []).filter(e => !byId.has(e.id)).map((e, i) =>
+      db.setJSON('q/' + e.id, { ...e, order: base + i, author: 'admin', createdAt: t, updatedAt: t })));
+    // «updates»: se reescribe la entrada con el texto actual del contenido base, pero SOLO si
+    // nadie la ha editado a mano (updatedAt == createdAt). Lo editado por ti nunca se pisa.
+    await Promise.all((p.updates || []).map(id => {
+      const cur = byId.get(id), src = KB_SEED.find(e => e.id === id);
+      if (!cur || !src || cur.updatedAt !== cur.createdAt) return null;
+      return db.setJSON('q/' + id, { ...cur, question: src.question, answer: src.answer, keywords: src.keywords });
+    }));
     await db.setJSON(flag, { at: t });
     changed = true;
   }

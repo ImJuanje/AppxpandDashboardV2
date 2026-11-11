@@ -68,6 +68,41 @@ const WEB_PRICES = [
     'precio web, pack pro, 1189, 1.189, web completa, asistente ia, inteligencia artificial, chatbot, métricas, informe, reseñas, qr, seis pestañas, 6 pestañas, formación, pago único')
 ];
 
+/* ---------- Guion de captación (leads) · va ANTES del paso 1 del proceso comercial ---------- */
+const CAPTACION = [
+  E('cap-1', 'cierre', '', "Dónde buscar clientes y a quién llamar primero",
+    "Buscamos negocios locales que ya tienen clientes pero se ven mal en Google. Abre Google Maps, busca un tipo de negocio de tu zona (por ejemplo \"peluquería Albacete\") y revisa las fichas una a una.\n\nSeñales de un buen candidato:\n- Menos de 20 reseñas o nota por debajo de 4,3.\n- Pocas fotos, sin servicios o con horarios antiguos.\n- Sin web, o con una web lenta que no se ve bien en el móvil.\n- Negocio recién abierto: es el mejor momento para el Paquete lanzadera.\n- Competidores cercanos con una ficha claramente mejor (será tu argumento).\n\nOrden de prioridad:\n1. Negocios nuevos.\n2. Negocios con ficha a medias pero con movimiento (reseñas recientes).\n3. Negocios con web antigua.\n\nRegistra cada negocio que contactes en el panel: nombre, contacto, tipo, el problema que has visto y la fecha del próximo seguimiento. Sin registro no hay seguimiento.",
+    "leads, captación, buscar clientes, prospectar, google maps, candidatos, a quién llamar"),
+
+  E('cap-2', 'cierre', '', "Mini-revisión de 10 minutos (antes de contactar)",
+    "Antes del primer contacto, mira estas 5 cosas y apunta datos concretos:\n\n1. Ficha de Google: número de reseñas y nota, fotos, categorías, servicios, horario y descripción.\n2. Dos o tres competidores de la zona: las mismas cifras.\n3. Web: ¿existe?, ¿se ve bien en el móvil?, ¿tiene botón de llamar o WhatsApp?, ¿muestra precios?\n4. Reseñas recientes: ¿responde el dueño?, ¿cuándo fue la última?\n5. Busca \"[su servicio] + [su ciudad]\": ¿aparece? ¿En qué puesto?\n\nResultado: 3 hallazgos concretos con cifras, por ejemplo \"tenéis 12 reseñas y el negocio de al lado 85\". Son los datos que usarás en el primer contacto.\n\nNo inventes datos ni prometas posiciones en Google.",
+    "revisión, revisión gratuita, checklist, auditoría, análisis, preparar contacto, hallazgos"),
+
+  E('cap-3', 'cierre', '', "Guion 1 · Visita en persona (la más eficaz)",
+    "Cuándo ir: fuera de las horas punta (no a mediodía en un bar ni con cola).\n\n1. Saludo y motivo corto: \"Hola, soy [nombre] de AppXpand. Trabajamos con negocios de la zona para que los encuentren mejor en Google. ¿Hablo con el responsable?\"\n2. Dato concreto: \"He mirado vuestra ficha en Google y he visto [hallazgo], y que [competidor] tiene [cifra]. Me ha parecido una pena porque se nota que el negocio funciona.\"\n3. Propuesta: \"Te hacemos una revisión gratuita de cómo te ven hoy los clientes, sin compromiso. Respondemos en menos de 24 horas con lo que hemos visto. ¿Me dejas tu nombre y un teléfono o email?\"\n4. Cierre: apunta nombre del negocio, ciudad y contacto, y confirma el siguiente paso: \"Mañana te escribimos con lo que hemos visto.\"\n\nSi no está el responsable: pregunta cuándo puedes volver y apunta el nombre de quien te atiende.",
+    "visita, en persona, presencial, entrar al negocio, primer contacto, guion, puerta fría"),
+
+  E('cap-4', 'cierre', '', "Guion 2 · Llamada de teléfono",
+    "1. Presentación y permiso: \"Hola, ¿hablo con [nombre / el responsable de (negocio)]? Soy [nombre] de AppXpand, ¿tienes un minuto?\"\n   Si no puede: \"¿Cuándo te viene mejor que te llame?\" y apúntalo.\n2. Gancho con dato: \"Te llamo porque he visto la ficha de [negocio] en Google y he notado [hallazgo]. Ayudamos a negocios de la zona a que los encuentren y les llamen más desde Google.\"\n3. Propuesta: \"Lo primero que hacemos es una revisión gratuita: miramos tu ficha, tu web y tus reseñas frente a los negocios de tu zona y te contamos qué falla. ¿Te la preparamos?\"\n4. Cierre: \"Perfecto, ¿me dices tu email o tu WhatsApp? En menos de 24 horas te llega lo que hemos visto.\"\n\nConsejos: máximo 2 minutos, habla despacio y no leas el guion de corrido. Si dice que no, agradece y pregunta si puedes volver a escribirle más adelante.",
+    "llamada, teléfono, llamar, primer contacto, guion, llamada en frío"),
+
+  E('cap-5', 'cierre', '', "Guion 3 · Mensaje (WhatsApp o Instagram)",
+    "Mensaje base (cámbialo para cada negocio, nunca mandes el mismo a todos):\n\n\"Hola [nombre], soy [tu nombre] de AppXpand. He visto la ficha de [negocio] en Google y he notado que [hallazgo concreto]. Hacemos revisiones gratuitas de cómo te ven tus clientes en Google, sin compromiso. ¿Te la preparo? Si no te interesa, dímelo y no te escribo más.\"\n\nReglas:\n- Un mensaje por negocio, corto y personalizado. Nada de envíos masivos.\n- Siempre que se pueda, mejor visita o llamada antes que mensaje.\n- Ofrece siempre la opción de no recibir más mensajes y respétala.",
+    "mensaje, whatsapp, instagram, dm, primer contacto, escribir, plantilla"),
+
+  E('cap-6', 'cierre', '', "Guion 4 · Seguimiento (si no contestan)",
+    "- Día 2-3: \"Hola [nombre], te escribí hace unos días sobre la ficha de [negocio]. ¿Te la preparo? Son 10 minutos y es gratis.\"\n- Día 7: aporta algo nuevo, no repitas: \"He visto que [competidor] acaba de subir fotos y reseñas nuevas. Si quieres te cuento cómo está tu ficha en comparación.\"\n- Día 14 (último): \"No te molesto más. Si algún día quieres saber cómo te ven en Google, aquí estoy.\"\n\nMáximo 3 intentos. Después, apúntalo en el panel y retómalo dentro de 2-3 meses.\n\nCuando entregues la revisión: no la mandes sin más. Llama para explicarla, enseña los 3 hallazgos y propón el paquete que encaje:\n- Negocio nuevo: Paquete lanzadera.\n- Tiene web pero la ficha está floja: optimización del perfil de Google.\n- Sin web: Web Básico o Pack Inicial.",
+    "seguimiento, no contesta, recordatorio, insistir, segundo mensaje, revisión entregada, siguiente paso"),
+
+  E('cap-7', 'cierre', '', "Respuestas rápidas al primer contacto",
+    "| Si dicen | Responde |\n| \"No tengo tiempo\" | \"Entiendo, por eso lo hacemos nosotros: solo necesito el nombre del negocio. ¿Te lo mando por WhatsApp?\" |\n| \"Ya tengo quien me lo lleva\" | \"Perfecto. La revisión no compromete a nada y te sirve para comparar lo que tienes con lo que se ve en Google. ¿Te la envío igualmente?\" |\n| \"Mándame información\" | \"Claro. Para que no sea genérica te preparo la revisión de tu negocio. ¿Me das tu email o WhatsApp?\" |\n| \"No me interesa\" | \"Sin problema, gracias por tu tiempo. ¿Puedo escribirte más adelante?\" Si dice que no, anótalo y no insistas. |\n| \"¿Cuánto cuesta?\" | \"La revisión es gratuita. Después, según lo que necesites, hay opciones desde 337 € para la web (pago único). Te lo cuento cuando veamos tu caso.\" |\n| \"¿Me aseguras salir primero en Google?\" | \"Nadie puede garantizar una posición. Lo que hacemos es dejar tu ficha, tu web y tus reseñas bien montadas y medir cómo evoluciona. Suele notarse entre 1 y 3 meses.\" |",
+    "no tengo tiempo, ya tengo, mándame información, no me interesa, cuánto cuesta, garantía, primeros en google, rechazo, primer contacto"),
+
+  E('cap-8', 'cierre', '', "Normas de contacto con clientes potenciales",
+    "- Prioriza la visita y la llamada. Evita los envíos masivos de WhatsApp, email o mensajes directos: la normativa española restringe las comunicaciones comerciales electrónicas no solicitadas.\n- Preséntate siempre con tu nombre y AppXpand, y di de dónde has sacado el contacto (su ficha pública de Google).\n- Usa solo datos públicos del negocio.\n- Si te dicen que no, no vuelvas a contactar y anótalo en el panel.\n- No prometas posiciones ni resultados en Google.\n- Ante cualquier duda, consulta con la administración antes de enviar nada.",
+    "normas, normativa, legal, spam, protección de datos, consentimiento, rgpd, lssi, contactar, permiso")
+];
+
 export const KB_SEED = [
   /* ---------- 1 · Qué vendemos ---------- */
   E('srv-1', 'servicios', '', '¿Qué es AppXpand?',
@@ -159,7 +194,7 @@ No tienen por qué competir: pueden complementarse.`,
   E('faq-3', 'faq', '', '¿Las webs son personalizadas?', 'Adaptamos el diseño y las funcionalidades a las necesidades del proyecto.', 'personalizada, a medida, plantilla, diseño'),
   E('faq-4', 'faq', '', '¿Puedo tener mi propio dominio?', 'Sí, podemos trabajar con un dominio propio.', 'dominio, .com, .es, url, nombre de la web'),
   E('faq-5', 'faq', '', '¿La web funciona en móviles?', 'Sí, desarrollamos webs adaptadas a móviles, tablets y ordenadores.', 'móvil, responsive, tablet, adaptada, celular'),
-  E('faq-6', 'faq', '', '¿Incluís posicionamiento en Google?', 'Podemos incorporar optimización SEO básica y ofrecer trabajos de posicionamiento adicionales según el proyecto.', 'seo, google, posicionar, posicionamiento, aparecer, primeros resultados, buscadores'),
+  E('faq-6', 'faq', '', '¿Incluís posicionamiento en Google?', 'Todas las webs llevan SEO local básico y, desde el Pack Inicial, optimización SEO completa (títulos, descripciones, estructura, palabras clave locales y alta en Google Search Console). No se garantiza una posición concreta: el posicionamiento local suele tardar entre 1 y 3 meses en notarse.', 'seo, google, posicionar, posicionamiento, aparecer, primeros resultados, buscadores, garantía'),
   E('faq-7', 'faq', '', '¿Puedo tener una tienda online?', 'Sí, desarrollamos soluciones ecommerce.', 'tienda, ecommerce, vender online, carrito, comprar'),
   E('faq-8', 'faq', '', '¿Puedo ampliar mi web después?', 'Sí, podemos presupuestar nuevas funcionalidades y ampliaciones.', 'ampliar, ampliación, nuevas funciones, más adelante, crecer'),
   E('faq-9', 'faq', '', '¿El mantenimiento es obligatorio?', 'No debemos presentarlo como obligatorio salvo que las condiciones específicas del proyecto indiquen lo contrario.', 'mantenimiento, obligatorio, cuota, mensualidad, permanencia, tengo que pagar'),
@@ -170,22 +205,44 @@ No tienen por qué competir: pueden complementarse.`,
   /* ---------- 2 · Precios y packs ---------- */
   ...WEB_PRICES,
 
+  E('pre-lanz', 'precios', '', 'Paquete lanzadera · 330 € de alta + 29 €/mes',
+`Para negocios que acaban de abrir.
+
+- Alta: web, estudio y optimización de la ficha de Google.
+- Formulario, mapa y tarjeta de reseñas.
+- Mantenimiento: ajustes de SEO revisados cada 3 meses.
+- Una modificación por campaña (Navidad, verano, Black Friday…).
+- Cambios extra, a consulta.`,
+    'precio, lanzadera, negocio nuevo, acaba de abrir, 330, 29, alta, cuota, paquete'),
+
   E('pre-1', 'precios', '', 'Mantenimiento Básico · 39,99 €/mes',
-`- Mantenimiento básico de la web.
-- Supervisión y conservación del funcionamiento.
+`- Mantenimiento técnico y actualizaciones de seguridad.
+- Copias de seguridad.
+- Revisiones de funcionamiento y comprobación de formularios y enlaces.
+- Soporte por email y WhatsApp.
 - Sin horas de desarrollo incluidas.`,
     'precio, tarifa, cuota, mensualidad, cuánto cuesta, mantenimiento, plan, básico, barato'),
 
   E('pre-2', 'precios', '', 'Mantenimiento Avanzado · 69,99 €/mes',
-`- Mantenimiento de la web.
-- Soporte técnico.
-- 1 hora mensual de desarrollo.`,
+`Todo lo del plan Básico y además:
+
+- Optimización de velocidad.
+- Revisiones técnicas semanales.
+- 1 hora de desarrollo al mes: pequeños cambios y mejoras funcionales.
+- Actualizaciones de contenido.
+- Soporte prioritario.
+
+Es el plan más recomendado.`,
     'precio, tarifa, cuota, mensualidad, cuánto cuesta, mantenimiento, plan, avanzado'),
 
   E('pre-3', 'precios', '', 'Mantenimiento Premium · 117 €/mes',
-`- Mantenimiento completo.
-- Soporte técnico prioritario.
-- 3 horas mensuales de desarrollo.`,
+`Todo lo del plan Avanzado y además:
+
+- 3 horas de desarrollo al mes: mejoras y nuevas funcionalidades.
+- Modificaciones de diseño.
+- Optimización SEO periódica.
+- Informe mensual de rendimiento y revisión de conversiones.
+- Atención prioritaria.`,
     'precio, tarifa, cuota, mensualidad, cuánto cuesta, mantenimiento, plan, premium, completo'),
 
   E('pre-4', 'precios', '', 'Packs de mantenimiento anticipado',
@@ -203,12 +260,13 @@ Importes finales:
     'prepago, anticipado, pago adelantado, pack, descuento, ahorrar, 3 meses, 6 meses, 12 meses, anual, trimestral, semestral'),
 
   E('pre-5', 'precios', '', 'Condiciones importantes',
-`- Las horas de desarrollo no son acumulables.
-- Las horas se renuevan mensualmente.
-- Se contabiliza el tiempo real de trabajo.
-- Las horas incluidas están destinadas a webs existentes.
-- Los desarrollos e integraciones complejas se presupuestan aparte.
-- Los descuentos de prepago no son acumulables con otras promociones.`,
+`- Las horas de desarrollo se renuevan cada mes y no son acumulables.
+- Se contabiliza el tiempo real de trabajo: no equivalen a desarrollos ilimitados.
+- Las horas incluidas son para webs existentes.
+- Los proyectos grandes, integraciones complejas y desarrollos que superen las horas incluidas se presupuestan aparte.
+- Los packs de prepago se abonan por adelantado y sus descuentos no se acumulan con otras promociones.
+- Los dominios y servicios de terceros no están incluidos salvo que se indique.
+- Precios totales, IVA no desglosado.`,
     'condiciones, horas, acumulables, extras, integraciones, aparte, promociones, letra pequeña'),
 
   /* ---------- 5 · Descuentos (interno) ---------- */
@@ -246,6 +304,8 @@ Importes finales:
     'normas, comisión, comisiones, acumular, mínimo, excepción, registrar, mantenimiento, extras'),
 
   /* ---------- 6 · Cierre de ventas ---------- */
+  ...CAPTACION,
+
   E('cie-1', 'cierre', '', 'Paso 1. Identificar la necesidad', 'Entender qué problema tiene el cliente y qué solución necesita.', 'cerrar venta, proceso comercial, pasos, necesidad, diagnóstico'),
   E('cie-2', 'cierre', '', 'Paso 2. Presentar la propuesta', 'Explicar el servicio adecuado, sus ventajas y el presupuesto.', 'cerrar venta, proceso comercial, pasos, propuesta, presupuesto'),
   E('cie-3', 'cierre', '', 'Paso 3. Resolver objeciones', 'Escuchar, comprender la preocupación y responder con argumentos reales.', 'cerrar venta, proceso comercial, pasos, objeciones, dudas'),
@@ -274,6 +334,13 @@ Juanje revisa lo contratado y pasa a la fase de toma de requerimientos con el cl
 /* Novedades que se añaden UNA sola vez a los paneles que ya tienen contenido (la «key» queda
    marcada al aplicarlas, así que si luego borras una entrada no vuelve). Van al principio de
    su sección. Para añadir más en el futuro: nuevo objeto con otra key. */
+const SEED_BY_ID = id => KB_SEED.find(e => e.id === id);
 export const KB_PATCHES = [
-  { key: 'webs-2026-11', entries: WEB_PRICES }
+  { key: 'webs-2026-11', entries: WEB_PRICES },
+  // Alinea el panel con el catálogo 2026: añade el paquete lanzadera y actualiza (solo si nadie las
+  // ha editado a mano) las entradas de mantenimiento, condiciones y la FAQ de SEO.
+  { key: 'catalogo-2026-11-b', base: -96, entries: [SEED_BY_ID('seed-pre-lanz')],
+    updates: ['seed-pre-1', 'seed-pre-2', 'seed-pre-3', 'seed-pre-5', 'seed-faq-6'] },
+  // Guion de captación: 8 entradas al principio de «Cierre de ventas».
+  { key: 'captacion-2026-11', base: -50, entries: CAPTACION }
 ];
