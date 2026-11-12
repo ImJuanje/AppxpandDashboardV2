@@ -781,7 +781,7 @@
       if (!rows.length) return '';
       const [head, ...body] = rows;
       return '<div class="rt-scroll"><table class="rt"><thead><tr>' + head.map(c => `<th>${cell(c)}</th>`).join('') + '</tr></thead>' +
-        (body.length ? '<tbody>' + body.map(r => '<tr>' + r.map(c => `<td>${cell(c)}</td>`).join('') + '</tr>').join('') + '</tbody>' : '') +
+        (body.length ? '<tbody>' + body.map(r => '<tr>' + r.map((c, i) => `<td data-label="${esc((head[i] || '').trim())}">${cell(c)}</td>`).join('') + '</tr>').join('') + '</tbody>' : '') +
         '</table></div>';
     };
     return String(s || '').split(/\n{2,}/).map(block => {
