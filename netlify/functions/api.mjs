@@ -141,6 +141,7 @@ async function deleteUser(db, id) {
   await db.delete('h/' + u.codeHash);
   await db.delete('idx/users');
   await db.delete('r/' + id);
+  await db.delete('ben/' + id);
   // su conversación privada con administración desaparece con él
   const { blobs: dm } = await db.list({ prefix: chanPrefix('dm.' + id) });
   await Promise.all(dm.map(b => db.delete(b.key)));
@@ -231,6 +232,8 @@ function cleanFields(b) {
     city: CITIES.includes(b.city) ? b.city : CITIES[3],
     status: STATUSES.includes(b.status) ? b.status : 'nuevo',
     value: Math.min(1e7, Math.max(0, Math.round(Number(b.value) || 0))),
+    pack: [3, 6, 12].includes(Number(b.pack)) ? Number(b.pack) : 0,
+    packValue: Math.min(1e6, Math.max(0, Math.round((Number(b.packValue) || 0) * 100) / 100)),
     next: isDay(String(b.next || '')) ? String(b.next) : '',
     notes: str(b.notes, 1500)
   };
@@ -618,6 +621,303 @@ async function chatDelete(user, db, channel, key) {
 }
 
 /* ---------- enrutado ---------- */
+/* ============================================================
+   Comisiones, gastos y pagos
+   ------------------------------------------------------------
+   REGLAS (edítalas aquí si cambian):
+   · Ciclo de pago: del día 29 al 28 (se paga el 28; el 29 se vuelve al tramo del 20 %).
+   · Tramo según nº de ventas «ganado» del comercial en el ciclo.
+   · retroactive = true  → el tramo alcanzado se aplica a TODAS las ventas del ciclo.
+     retroactive = false → cada venta cobra el % del tramo de su posición (1.ª–5.ª al 20 %, 6.ª–10.ª al 25 %…).
+   · Packs de mantenimiento prepago: se comisiona solo la parte de N meses (3→1, 6→2, 12→3).
+   ============================================================ */
+const PAY = {
+  payDay: 28,
+  retroactive: true,
+  tiers: [{ to: 5, rate: 0.20 }, { to: 10, rate: 0.25 }, { to: 15, rate: 0.30 }, { to: Infinity, rate: 0.35 }],
+  packCredit: { 3: 1, 6: 2, 12: 3 },
+  maxExpense: 2000,
+  maxAgeDays: 62,
+  // Gastos que se desbloquean con el rendimiento (ventas en el ciclo actual o en el anterior) y tope por ciclo
+  cats: {
+    gasolina:     { label: 'Gasolina y peajes',                icon: '⛽', minSales: 1,  cap: 150 },
+    tren:         { label: 'Tren, bus o taxi',                 icon: '🚆', minSales: 1,  cap: 150 },
+    material:     { label: 'Material comercial',               icon: '🖨️', minSales: 1,  cap: 60 },
+    dietas:       { label: 'Dietas y comidas con clientes',    icon: '🍽️', minSales: 3,  cap: 100 },
+    evento:       { label: 'Eventos y networking',             icon: '🤝', minSales: 3,  cap: 80 },
+    alojamiento:  { label: 'Alojamiento',                      icon: '🏨', minSales: 6,  cap: 120 },
+    formacion:    { label: 'Formación',                        icon: '🎓', minSales: 6,  cap: 150 },
+    otro:         { label: 'Otro gasto justificado',           icon: '📦', minSales: 6,  cap: 50 },
+    herramientas: { label: 'Teléfono, internet o herramientas', icon: '📱', minSales: 10, cap: 40 }
+  }
+};
+const FILE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const MAX_FILE_B64 = 2_800_000;
+
+const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+const sum = (list, f = x => x.amount) => r2(list.reduce((a, x) => a + (Number(f(x)) || 0), 0));
+const rateFor = n => (PAY.tiers.find(t => n <= t.to) || PAY.tiers[PAY.tiers.length - 1]).rate;
+const DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit' });
+const dayOf = iso => DAY_FMT.format(new Date(iso));
+const dayAdd = (d, k) => { const [y, m, dd] = d.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd + k)).toISOString().slice(0, 10); };
+function cycleOf(day) {
+  const [y, m0, d] = day.split('-').map(Number);
+  const m = d > PAY.payDay ? m0 + 1 : m0;
+  const end = new Date(Date.UTC(y, m - 1, PAY.payDay)).toISOString().slice(0, 10);
+  const prevEnd = new Date(Date.UTC(y, m - 2, PAY.payDay)).toISOString().slice(0, 10);
+  return { start: dayAdd(prevEnd, 1), end };
+}
+
+async function listPrefix(db, prefix) {
+  const { blobs } = await db.list({ prefix });
+  return (await Promise.all(blobs.map(b => db.get(b.key, { type: 'json' })))).filter(Boolean);
+}
+const loadPayData = async db => {
+  const [clients, expenses, adjs, payouts, users, ben] = await Promise.all([
+    allClients(db), listPrefix(db, 'x/'), listPrefix(db, 'adj/'), listPrefix(db, 'po/'), listUsers(db), listPrefix(db, 'ben/')
+  ]);
+  return { clients, expenses, adjs, payouts, ben, users: users.filter(u => u.role === 'comercial') };
+};
+
+/* Líneas de comisión de todas las ventas ganadas (de comerciales), con su ciclo y su tramo */
+function saleLines(clients, ownerIds) {
+  const groups = new Map();
+  for (const c of clients) {
+    if (c.status !== 'ganado' || !ownerIds.has(c.owner)) continue;
+    const at = c.wonAt || c.updatedAt;
+    const key = c.owner + '|' + cycleOf(dayOf(at)).end;
+    (groups.get(key) || groups.set(key, []).get(key)).push({ c, at });
+  }
+  const out = [];
+  for (const [key, arr] of groups) {
+    const [owner, cycleEnd] = key.split('|');
+    arr.sort((a, b) => a.at.localeCompare(b.at));
+    arr.forEach(({ c, at }, i) => {
+      const n = arr.length, rate = PAY.retroactive ? rateFor(n) : rateFor(i + 1);
+      const pack = Number(c.pack) || 0, credit = PAY.packCredit[pack] || 0, packValue = Number(c.packValue) || 0;
+      const packBase = pack && credit ? r2(packValue * credit / pack) : 0;
+      const value = Number(c.value) || 0, base = r2(value + packBase);
+      out.push({ kind: 'comision', clientId: c.id, business: c.business, owner, day: dayOf(at), cycleEnd, n, ordinal: i + 1,
+        rate, value, pack, packValue, packCredit: credit, packBase, base, amount: r2(base * rate) });
+    });
+  }
+  return out;
+}
+
+const capUsed = (expenses, owner, cat, cycleEnd) => sum(
+  expenses.filter(e => e.owner === owner && e.cat === cat && e.status !== 'rechazado' && cycleOf(e.date).end === cycleEnd),
+  e => (e.status === 'aprobado' ? e.approvedAmount : e.amount)
+);
+
+function personPay(u, d, today, lines) {
+  const cur = cycleOf(today), prev = cycleOf(dayAdd(cur.start, -1));
+  const mine = lines.filter(l => l.owner === u.id);
+  const paid = new Set(d.payouts.filter(p => p.owner === u.id).flatMap(p => p.lines.filter(l => l.kind === 'comision').map(l => l.clientId)));
+  const comm = mine.filter(l => !paid.has(l.clientId)).map(l => ({ ...l, open: l.cycleEnd > today }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+  const exp = d.expenses.filter(e => e.owner === u.id && e.status === 'aprobado' && !e.payoutId)
+    .map(e => ({ kind: 'gasto', id: e.id, cat: e.cat, concept: e.concept, day: e.date, amount: e.approvedAmount }));
+  const adj = d.adjs.filter(a => a.owner === u.id && !a.payoutId)
+    .map(a => ({ kind: 'ajuste', id: a.id, concept: a.concept, day: a.day, amount: a.amount }));
+  const salesCycle = mine.filter(l => l.cycleEnd === cur.end).length;
+  const salesPrev = mine.filter(l => l.cycleEnd === prev.end).length;
+  const idx = PAY.tiers.findIndex(t => salesCycle <= t.to);
+  const next = PAY.tiers[idx + 1] ? { need: PAY.tiers[idx].to + 1 - salesCycle, rate: PAY.tiers[idx + 1].rate } : null;
+  const eligible = Math.max(salesCycle, salesPrev);
+  const modes = ((d.ben || []).find(b => b.owner === u.id) || {}).modes || {};
+  return {
+    id: u.id, name: u.name, salesCycle, salesPrev, rate: rateFor(salesCycle), next,
+    due: r2(sum(comm.filter(l => !l.open)) + sum(exp) + sum(adj)),
+    accrued: sum(comm.filter(l => l.open)),
+    commissions: comm, expenses: exp, adjustments: adj,
+    cats: Object.entries(PAY.cats).map(([id, c]) => {
+      const mode = modes[id] || 'auto', perf = eligible >= c.minSales;
+      return { id, ...c, mode, auto: perf, eligible: mode === 'on' || (mode !== 'off' && perf), used: capUsed(d.expenses, u.id, id, cur.end) };
+    })
+  };
+}
+
+async function buildPay(db, user) {
+  const d = await loadPayData(db);
+  const today = dayOf(now()), cycle = cycleOf(today);
+  const admin = isAdmin(user);
+  const team = admin ? d.users : d.users.filter(u => u.id === user.id);
+  const lines = saleLines(d.clients, new Set(team.map(u => u.id)));
+  const people = team.map(u => personPay(u, d, today, lines));
+  const names = new Map(d.users.map(u => [u.id, u.name]));
+  const mineOnly = x => admin || x.owner === user.id;
+  const expenses = d.expenses.filter(mineOnly)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 150)
+    .map(e => ({ ...e, ownerName: names.get(e.owner) || e.owner }));
+  const payouts = d.payouts.filter(mineOnly).sort((a, b) => b.paidAt.localeCompare(a.paidAt)).slice(0, 80);
+  return {
+    today, cycle,
+    rules: {
+      payDay: PAY.payDay, retroactive: PAY.retroactive, packCredit: PAY.packCredit, maxExpense: PAY.maxExpense,
+      tiers: PAY.tiers.map(t => ({ to: t.to === Infinity ? null : t.to, rate: t.rate })),
+      cats: Object.entries(PAY.cats).map(([id, c]) => ({ id, ...c }))
+    },
+    people, expenses, payouts,
+    totals: { due: sum(people, p => p.due), accrued: sum(people, p => p.accrued) }
+  };
+}
+
+/* Índice de gastos pendientes de aprobar (para el aviso de la pestaña) */
+async function pendingIds(db) {
+  const idx = await db.get('idx/xp', { type: 'json' });
+  if (idx) return idx;
+  const ids = (await listPrefix(db, 'x/')).filter(e => e.status === 'pendiente').map(e => e.id);
+  await db.setJSON('idx/xp', ids);
+  return ids;
+}
+async function setPending(db, id, on) {
+  const ids = (await pendingIds(db)).filter(x => x !== id);
+  if (on) ids.push(id);
+  await db.setJSON('idx/xp', ids);
+}
+
+async function createExpense(req, user, db) {
+  if (isAdmin(user)) throw new HttpError(403, 'Los gastos los registran los comerciales.');
+  const b = await readBody(req);
+  const cat = PAY.cats[b.cat];
+  if (!cat) throw new HttpError(400, 'Elige el tipo de gasto.');
+  const concept = str(b.concept, 100);
+  if (concept.length < 3) throw new HttpError(400, 'Describe el gasto (qué fue y para qué cliente o visita).');
+  const amount = r2(Number(b.amount));
+  if (!(amount > 0) || amount > PAY.maxExpense) throw new HttpError(400, `El importe debe estar entre 0,01 € y ${PAY.maxExpense} €.`);
+  const today = dayOf(now()), date = str(b.date, 10);
+  if (!isDay(date) || date > today) throw new HttpError(400, 'La fecha del gasto no es válida (no puede ser futura).');
+  if (date < dayAdd(today, -PAY.maxAgeDays)) throw new HttpError(400, `Solo se aceptan gastos de los últimos ${PAY.maxAgeDays} días.`);
+  const f = b.file;
+  if (!f || !FILE_TYPES.includes(f.type) || typeof f.data !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(f.data))
+    throw new HttpError(400, 'Adjunta el justificante (foto o PDF del ticket o factura).');
+  if (f.data.length > MAX_FILE_B64) throw new HttpError(413, 'El justificante pesa demasiado (máx. 2 MB).');
+
+  const d = await loadPayData(db);
+  const lines = saleLines(d.clients, new Set([user.id]));
+  const p = personPay({ id: user.id, name: user.name }, d, today, lines);
+  const row = p.cats.find(c => c.id === b.cat);
+  if (row.mode === 'off') throw new HttpError(403, `«${cat.label}» está desactivado para ti. Consúltalo con administración.`);
+  if (!row.eligible) throw new HttpError(403, `«${cat.label}» se desbloquea al llegar a ${cat.minSales} ${cat.minSales === 1 ? 'venta' : 'ventas'} (en este ciclo o en el anterior). Llevas ${Math.max(p.salesCycle, p.salesPrev)}.`);
+  const used = capUsed(d.expenses, user.id, b.cat, cycleOf(date).end);
+  if (used + amount > cat.cap + 1e-9)
+    throw new HttpError(409, `Superas el tope de «${cat.label}» para ese ciclo (${cat.cap} €; ya llevas ${used.toFixed(2).replace('.', ',')} € entre aprobados y pendientes).`);
+
+  const id = 'x' + randomUUID().replace(/-/g, '').slice(0, 16);
+  const e = {
+    id, owner: user.id, cat: b.cat, concept, amount, date, note: str(b.note, 500),
+    fileName: str(f.name, 80).replace(/[^\w. -]/g, '_') || 'justificante', fileType: f.type,
+    status: 'pendiente', approvedAmount: 0, adminNote: '', decidedAt: '', decidedBy: '', payoutId: '', createdAt: now()
+  };
+  await db.setJSON('xf/' + id, { type: f.type, data: f.data });
+  await db.setJSON('x/' + id, e);
+  await setPending(db, id, true);
+  return json(e, 201);
+}
+
+async function decideExpense(req, id, user, db) {
+  if (!isId(id)) throw new HttpError(404, 'Gasto no encontrado.');
+  const e = await db.get('x/' + id, { type: 'json' });
+  if (!e) throw new HttpError(404, 'Gasto no encontrado.');
+  if (e.payoutId) throw new HttpError(409, 'Este gasto ya está liquidado y no se puede cambiar.');
+  const b = await readBody(req);
+  const adminNote = str(b.adminNote, 300);
+  if (b.decision === 'aprobado') {
+    const amt = r2(b.approvedAmount ?? e.amount);
+    if (!(amt > 0) || amt > e.amount) throw new HttpError(400, 'El importe aprobado debe ser mayor que 0 y no superar lo solicitado.');
+    Object.assign(e, { status: 'aprobado', approvedAmount: amt, adminNote });
+  } else if (b.decision === 'rechazado') {
+    if (adminNote.length < 3) throw new HttpError(400, 'Indica el motivo del rechazo para que el comercial lo vea.');
+    Object.assign(e, { status: 'rechazado', approvedAmount: 0, adminNote });
+  } else if (b.decision === 'pendiente') {
+    Object.assign(e, { status: 'pendiente', approvedAmount: 0, adminNote: '' });
+  } else throw new HttpError(400, 'Decisión no válida.');
+  e.decidedAt = e.status === 'pendiente' ? '' : now();
+  e.decidedBy = e.status === 'pendiente' ? '' : user.id;
+  await db.setJSON('x/' + id, e);
+  await setPending(db, id, e.status === 'pendiente');
+  return json(e);
+}
+
+async function deleteExpense(id, user, db) {
+  if (!isId(id)) throw new HttpError(404, 'Gasto no encontrado.');
+  const e = await db.get('x/' + id, { type: 'json' });
+  if (!e || (!isAdmin(user) && e.owner !== user.id)) throw new HttpError(404, 'Gasto no encontrado.');
+  if (e.payoutId) throw new HttpError(409, 'Este gasto ya está liquidado.');
+  if (!isAdmin(user) && e.status !== 'pendiente') throw new HttpError(409, 'Solo puedes retirar gastos que aún están pendientes.');
+  await db.delete('x/' + id);
+  await db.delete('xf/' + id);
+  await setPending(db, id, false);
+  return json({ ok: true });
+}
+
+async function expenseFile(id, user, db) {
+  if (!isId(id)) throw new HttpError(404, 'Justificante no encontrado.');
+  const e = await db.get('x/' + id, { type: 'json' });
+  if (!e || (!isAdmin(user) && e.owner !== user.id)) throw new HttpError(404, 'Justificante no encontrado.');
+  const f = await db.get('xf/' + id, { type: 'json' });
+  if (!f) throw new HttpError(404, 'Justificante no encontrado.');
+  return new Response(Buffer.from(f.data, 'base64'), {
+    headers: { 'Content-Type': f.type, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline' }
+  });
+}
+
+async function createAdjustment(req, db) {
+  const b = await readBody(req);
+  const u = isId(b.owner) && (await db.get('u/' + b.owner, { type: 'json' }));
+  if (!u || u.role !== 'comercial') throw new HttpError(400, 'Elige un comercial.');
+  const concept = str(b.concept, 100), amount = r2(Number(b.amount));
+  if (concept.length < 3) throw new HttpError(400, 'Escribe el concepto del ajuste.');
+  if (!amount || Math.abs(amount) > 10000) throw new HttpError(400, 'Importe no válido (puede ser negativo para descontar).');
+  const a = { id: 'a' + randomUUID().replace(/-/g, '').slice(0, 16), owner: u.id, concept, amount, day: dayOf(now()), payoutId: '', createdAt: now() };
+  await db.setJSON('adj/' + a.id, a);
+  return json(a, 201);
+}
+/* Beneficios por comercial: auto (por rendimiento) · on (activado) · off (desactivado). cat '*' = todos */
+async function setBenefit(req, db) {
+  const b = await readBody(req);
+  const u = isId(b.owner) && (await db.get('u/' + b.owner, { type: 'json' }));
+  if (!u || u.role !== 'comercial') throw new HttpError(400, 'Elige un comercial.');
+  if (b.cat !== '*' && !PAY.cats[b.cat]) throw new HttpError(400, 'Beneficio no válido.');
+  if (!['auto', 'on', 'off'].includes(b.mode)) throw new HttpError(400, 'Modo no válido.');
+  const cur = (await db.get('ben/' + u.id, { type: 'json' })) || { owner: u.id, modes: {} };
+  for (const id of b.cat === '*' ? Object.keys(PAY.cats) : [b.cat]) {
+    if (b.mode === 'auto') delete cur.modes[id]; else cur.modes[id] = b.mode;
+  }
+  await db.setJSON('ben/' + u.id, cur);
+  return json(cur);
+}
+async function deleteAdjustment(id, db) {
+  if (!isId(id)) throw new HttpError(404, 'Ajuste no encontrado.');
+  const a = await db.get('adj/' + id, { type: 'json' });
+  if (!a) throw new HttpError(404, 'Ajuste no encontrado.');
+  if (a.payoutId) throw new HttpError(409, 'Este ajuste ya está liquidado.');
+  await db.delete('adj/' + id);
+  return json({ ok: true });
+}
+
+/* Marca como pagado lo que se le debe a un comercial: comisiones de ciclos ya cerrados (hasta hoy),
+   gastos aprobados y ajustes. Guarda una «foto» con el desglose. */
+async function createPayout(req, db) {
+  const b = await readBody(req);
+  const d = await loadPayData(db);
+  const u = d.users.find(x => x.id === b.owner);
+  if (!u) throw new HttpError(400, 'Elige un comercial.');
+  const today = dayOf(now());
+  const p = personPay(u, d, today, saleLines(d.clients, new Set([u.id])));
+  const lines = [...p.commissions.filter(l => !l.open), ...p.expenses, ...p.adjustments];
+  if (!lines.length) throw new HttpError(400, 'No hay nada que liquidar ahora mismo.');
+  const total = sum(lines);
+  const id = 'p' + randomUUID().replace(/-/g, '').slice(0, 16);
+  const po = { id, owner: u.id, ownerName: u.name, paidAt: now(), day: today, total, note: str(b.note, 200), lines };
+  await db.setJSON('po/' + id, po);
+  await Promise.all([
+    ...p.expenses.map(l => db.get('x/' + l.id, { type: 'json' }).then(e => e && db.setJSON('x/' + l.id, { ...e, payoutId: id }))),
+    ...p.adjustments.map(l => db.get('adj/' + l.id, { type: 'json' }).then(a => a && db.setJSON('adj/' + l.id, { ...a, payoutId: id })))
+  ]);
+  return json({ ok: true, payout: po }, 201);
+}
+
 export default async (req, ctx) => {
   try {
     const db = getStore({ name: 'crm', consistency: 'strong' });
@@ -646,7 +946,8 @@ export default async (req, ctx) => {
         posts,
         kb,
         settings,
-        ranking: wantRanking ? buildRanking(clients, users, admin) : null
+        ranking: wantRanking ? buildRanking(clients, users, admin) : null,
+        payPending: admin ? (await pendingIds(db)).length : 0
       });
     }
 
@@ -692,6 +993,24 @@ export default async (req, ctx) => {
       if (id && !sub && m === 'PUT') return await updateClient(req, id, user, db);
       if (id && !sub && m === 'DELETE') { await getClient(db, id, user); await db.delete('c/' + id); return json({ ok: true }); }
       if (id && sub === 'notes' && m === 'POST') return await addNote(req, id, user, db);
+    }
+
+    if (res === 'pay') {
+      if (!id && m === 'GET') return json(await buildPay(db, user));
+      if (id === 'adjustments') {
+        needAdmin();
+        if (!sub && m === 'POST') return await createAdjustment(req, db);
+        if (sub && m === 'DELETE') return await deleteAdjustment(sub, db);
+      }
+      if (id === 'benefits' && !sub && m === 'PUT') { needAdmin(); return await setBenefit(req, db); }
+      if (id === 'payouts' && !sub && m === 'POST') { needAdmin(); return await createPayout(req, db); }
+    }
+
+    if (res === 'expenses') {
+      if (!id && m === 'POST') return await createExpense(req, user, db);
+      if (id && sub === 'file' && m === 'GET') return await expenseFile(id, user, db);
+      if (id && !sub && m === 'PUT') { needAdmin(); return await decideExpense(req, id, user, db); }
+      if (id && !sub && m === 'DELETE') return await deleteExpense(id, user, db);
     }
 
     if (res === 'chat') {
