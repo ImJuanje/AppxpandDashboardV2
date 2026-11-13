@@ -69,7 +69,7 @@
 
       <nav class="tabs" id="tabs" aria-label="Secciones">
         <button type="button" data-view="resumen">Resumen</button>
-        <button type="button" data-view="clientes">Clientes</button>
+        <button type="button" data-view="clientes">Clientes <span class="tab-badge" id="leadBadge" hidden>0</span></button>
         <button type="button" data-view="kb">Centro comercial</button>
         <button type="button" data-view="news">AppXnews <span class="tab-badge" id="newsBadge" hidden>0</span></button>
         <button type="button" data-view="chat">Chat <span class="tab-badge" id="chatBadge" hidden>0</span></button>
@@ -94,6 +94,7 @@
         </label>
       </div>
 
+      <button type="button" class="news-banner lead-banner" hidden></button>
       <button type="button" class="news-banner" id="newsBanner" hidden></button>
 
       <div class="kpis" id="kpis"></div>
@@ -112,6 +113,7 @@
 
     <!-- CLIENTES -->
     <section id="viewClientes" aria-labelledby="clientesTitle" hidden>
+      <button type="button" class="news-banner lead-banner" hidden></button>
       <div class="sec-head">
         <div>
           <h2 id="clientesTitle">Clientes</h2>

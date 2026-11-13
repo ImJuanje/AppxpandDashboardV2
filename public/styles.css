@@ -675,3 +675,9 @@ dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px)
 .chks { display: flex; flex-wrap: wrap; gap: 8px; }
 .chk { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; }
 .lbl { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
+
+/* Aviso de clientes nuevos desde la web */
+.lead-banner { background: linear-gradient(135deg, #fff4d6, #ffe9b0); border-color: #f0c96a; color: #6b4500; }
+.lead-banner:hover { border-color: #d9a52c; }
+[data-theme="dark"] .lead-banner { background: linear-gradient(135deg, #3a2c0b, #2f2208); border-color: #7a5a12; color: #ffd98a; }
+.pill-new { margin-left: 6px; vertical-align: middle; }
