@@ -143,6 +143,7 @@ async function deleteUser(db, id) {
   await db.delete('r/' + id);
   await db.delete('ben/' + id);
   await db.delete('tp/' + id);
+  await db.delete('pf/' + id);
   // su conversación privada con administración desaparece con él
   const { blobs: dm } = await db.list({ prefix: chanPrefix('dm.' + id) });
   await Promise.all(dm.map(b => db.delete(b.key)));
@@ -969,6 +970,34 @@ async function publicTeam(req, db) {
 }
 
 /* Servidor a servidor: una cita agendada en la web crea el lead asignado a esa persona */
+/* ---------- Perfil personal: foto, cumpleaños, teléfono y frase (los rellena cada persona) ---------- */
+const PF_EMPTY = { photo: '', birthday: '', phone: '', bio: '' };
+const getPf = async (db, id) => ({ ...PF_EMPTY, ...((await db.get('pf/' + id, { type: 'json' })) || {}) });
+const validBirthday = s => {
+  const m = /^(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const d = new Date(Date.UTC(2000, +m[1] - 1, +m[2]));
+  return d.getUTCMonth() === +m[1] - 1 && d.getUTCDate() === +m[2];
+};
+async function saveProfile(req, user, db) {
+  const b = await readBody(req), cur = await getPf(db, user.id);
+  let photo = cur.photo;
+  if (b.photo === '') photo = '';
+  else if (typeof b.photo === 'string') {
+    if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(b.photo) || b.photo.length > 90000) throw new HttpError(400, 'La foto no es válida o pesa demasiado.');
+    photo = b.photo;
+  }
+  const birthday = str(b.birthday, 5);
+  if (birthday && !validBirthday(birthday)) throw new HttpError(400, 'La fecha de cumpleaños no es válida.');
+  const pf = { photo, birthday, phone: str(b.phone, 30), bio: str(b.bio, 200), updatedAt: now() };
+  await db.setJSON('pf/' + user.id, pf);
+  return json(pf);
+}
+async function allProfiles(db) {
+  const people = [ADMIN, ...(await listUsers(db))];
+  return Promise.all(people.map(async u => ({ id: u.id, name: u.name, role: u.role, ...(await getPf(db, u.id)) })));
+}
+
 async function publicLead(req, db) {
   if (!keyOk(req)) throw new HttpError(401, 'No autorizado.');
   const b = await readBody(req);
@@ -1041,6 +1070,12 @@ export default async (req, ctx) => {
         payPending: admin ? (await pendingIds(db)).length : 0
       });
     }
+
+    if (res === 'profile' && !id) {
+      if (m === 'GET') return json(await getPf(db, user.id));
+      if (m === 'PUT') return await saveProfile(req, user, db);
+    }
+    if (res === 'profiles' && !id && m === 'GET') { needAdmin(); return json(await allProfiles(db)); }
 
     if (res === 'news') {
       if (!id && m === 'POST') { needAdmin(); return await createPost(req, user, db); }
