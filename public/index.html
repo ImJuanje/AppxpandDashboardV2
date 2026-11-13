@@ -241,6 +241,12 @@
         <div id="teamOut"></div>
       </article>
 
+      <article class="card">
+        <h3>Equipo en la web</h3>
+        <p class="muted">Quién aparece en la página «Equipo» y con quién pueden agendar una llamada los clientes. El email no se publica: solo sirve para avisar de cada cita. Foto y nombre son opcionales y deben contar con el visto bueno de cada persona.</p>
+        <div id="teamWebOut"></div>
+      </article>
+
       <div class="grid2">
         <article class="card">
           <h3>Generador de códigos de alta</h3>
@@ -436,6 +442,36 @@
       <span class="spacer"></span>
       <button type="button" class="btn btn--ghost" id="adjCancel">Cancelar</button>
       <button type="submit" class="btn btn--primary">Añadir</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO PERFIL EN LA WEB ============ -->
+<dialog id="teamDialog" aria-labelledby="tmTitle">
+  <form id="teamForm" novalidate>
+    <header class="dlg-head">
+      <div><h3 id="tmTitle">Perfil</h3><small class="muted">Lo que verán los clientes y cuándo se puede agendar</small></div>
+      <button type="button" class="icon-btn" id="tmClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label>Nombre público<input id="tmName" type="text" maxlength="40" placeholder="Ej. Lucía"></label>
+        <label>Zona<input id="tmZone" type="text" maxlength="60" placeholder="Ej. Albacete capital"></label>
+        <label class="span2">Frase corta<textarea id="tmBio" rows="2" maxlength="160" placeholder="Ej. Te ayudo a que tu negocio salga en Google."></textarea></label>
+        <label class="span2">Email para avisos de cita (privado)<input id="tmEmail" type="email" maxlength="120" placeholder="nombre@correo.com"></label>
+        <div class="span2"><span class="lbl">Foto (opcional)</span>
+          <div class="tw-photo"><span id="tmPrev"></span><input id="tmFile" type="file" accept="image/*"><button type="button" class="btn btn--ghost btn--sm" id="tmNoPhoto">Quitar foto</button></div></div>
+        <div class="span2"><span class="lbl">Días disponibles</span><div class="chks" id="tmDays"></div></div>
+        <label>Desde<input id="tmFrom" type="time"></label>
+        <label>Hasta<input id="tmTo" type="time"></label>
+        <label class="chk span2"><input id="tmShow" type="checkbox"> Mostrar en la web y permitir reservar con esta persona</label>
+      </div>
+      <p id="tmError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="tmCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Guardar</button>
     </footer>
   </form>
 </dialog>

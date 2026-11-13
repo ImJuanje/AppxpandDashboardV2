@@ -61,6 +61,7 @@
     newsFilter: '',
     newsSeen: '',
     newsMarks: new Set(),
+    team: null, teamId: '', teamPhoto: undefined,
     pay: null, payAt: 0, payTab: 'resumen', payPending: 0, payOpen: new Set(), decId: '',
     chat: freshChat()
   };
@@ -214,6 +215,7 @@
     state.token = token;
     applySync(await api('GET', 'sync'));
 
+    state.team = null;
     state.pay = null; state.payTab = 'resumen'; state.payOpen = new Set();
     state.view = 'resumen';
     state.cview = 'lista';
@@ -329,7 +331,7 @@
     else if (state.view === 'kb') renderKb();
     else if (state.view === 'chat') renderChat();
     else if (state.view === 'pay') renderPay();
-    else renderEquipo();
+    else { renderEquipo(); renderTeamWeb(); }
     updateNewsBadge();
     updatePayBadge();
   }
@@ -1797,6 +1799,75 @@
   }
 
   /* ============================================================
+     EQUIPO EN LA WEB
+     ============================================================ */
+  const DOW = [[1, 'L'], [2, 'M'], [3, 'X'], [4, 'J'], [5, 'V'], [6, 'S'], [0, 'D']];
+  async function loadTeam() {
+    try { state.team = await api('GET', 'team', undefined, true); renderTeamWeb(); } catch (e) { /* se reintenta al volver */ }
+  }
+  function renderTeamWeb() {
+    const out = $('#teamWebOut');
+    if (!out) return;
+    if (!state.team) { out.innerHTML = '<p class="empty">Cargando…</p>'; loadTeam(); return; }
+    out.innerHTML = state.team.map(t => {
+      const days = DOW.filter(([d]) => t.days.includes(d)).map(([, l]) => l).join(' ');
+      const av = t.photo ? `<img class="tw-av" src="${esc(t.photo)}" alt="">` : `<span class="tw-av tw-av--i">${esc((t.name || t.userName || '?').trim().charAt(0).toUpperCase())}</span>`;
+      return `<div class="tw-row">${av}
+        <div class="tw-main"><strong>${esc(t.name || t.userName)}</strong>
+          <small class="muted">${esc(t.zone || 'Sin zona')} · ${days || 'sin días'} ${esc(t.from)}–${esc(t.to)}</small></div>
+        <span class="pill ${t.show ? 'pill--green' : 'pill--amber'}">${t.show ? 'Visible en la web' : 'Oculto'}</span>
+        <button class="btn btn--ghost btn--sm" type="button" data-teamedit="${esc(t.id)}">Editar</button></div>`;
+    }).join('');
+  }
+  const tdlg = () => $('#teamDialog');
+  function openTeam(id) {
+    const t = state.team.find(x => x.id === id); if (!t) return;
+    state.teamId = id; state.teamPhoto = undefined;
+    $('#tmTitle').textContent = 'Perfil de ' + (t.userName);
+    $('#tmName').value = t.name; $('#tmZone').value = t.zone; $('#tmBio').value = t.bio; $('#tmEmail').value = t.email;
+    $('#tmFrom').value = t.from; $('#tmTo').value = t.to; $('#tmShow').checked = t.show;
+    $('#tmFile').value = '';
+    $('#tmPrev').innerHTML = t.photo ? `<img class="tw-av" src="${esc(t.photo)}" alt="">` : '';
+    $('#tmDays').innerHTML = DOW.map(([d, l]) => `<label class="chk"><input type="checkbox" value="${d}" ${t.days.includes(d) ? 'checked' : ''}> ${l}</label>`).join('');
+    $('#tmError').hidden = true;
+    tdlg().showModal();
+  }
+  async function squarePhoto(file) {
+    if (!/^image\//.test(file.type)) throw new Error('Sube una imagen (JPG o PNG).');
+    let bmp; try { bmp = await createImageBitmap(file); } catch { throw new Error('No se pudo leer la imagen.'); }
+    const s = Math.min(bmp.width, bmp.height), cv = document.createElement('canvas');
+    cv.width = cv.height = 256;
+    cv.getContext('2d').drawImage(bmp, (bmp.width - s) / 2, (bmp.height - s) / 2, s, s, 0, 0, 256, 256);
+    return cv.toDataURL('image/jpeg', 0.82);
+  }
+  async function saveTeam(e) {
+    e.preventDefault();
+    const err = $('#tmError');
+    try {
+      const body = {
+        name: $('#tmName').value.trim(), zone: $('#tmZone').value.trim(), bio: $('#tmBio').value.trim(), email: $('#tmEmail').value.trim(),
+        from: $('#tmFrom').value, to: $('#tmTo').value, show: $('#tmShow').checked,
+        days: [...$('#tmDays').querySelectorAll('input:checked')].map(i => Number(i.value))
+      };
+      if (state.teamPhoto !== undefined) body.photo = state.teamPhoto;
+      await api('PUT', `team/${encodeURIComponent(state.teamId)}`, body);
+      tdlg().close(); toast('Perfil guardado'); await loadTeam();
+    } catch (x) { err.textContent = x.message; err.hidden = false; }
+  }
+  function bindTeam() {
+    $('#teamWebOut').addEventListener('click', e => { const b = e.target.closest('[data-teamedit]'); if (b) openTeam(b.dataset.teamedit); });
+    $('#teamForm').addEventListener('submit', saveTeam);
+    $('#tmClose').addEventListener('click', () => tdlg().close());
+    $('#tmCancel').addEventListener('click', () => tdlg().close());
+    $('#tmFile').addEventListener('change', async e => {
+      const f = e.target.files[0]; if (!f) return;
+      try { state.teamPhoto = await squarePhoto(f); $('#tmPrev').innerHTML = `<img class="tw-av" src="${state.teamPhoto}" alt="">`; $('#tmError').hidden = true; }
+      catch (x) { $('#tmError').textContent = x.message; $('#tmError').hidden = false; e.target.value = ''; }
+    });
+    $('#tmNoPhoto').addEventListener('click', () => { state.teamPhoto = ''; $('#tmPrev').innerHTML = ''; $('#tmFile').value = ''; });
+  }
+
+  /* ============================================================
      EVENTOS
      ============================================================ */
   function bind() {
@@ -1921,6 +1992,7 @@
     dlg().addEventListener('close', () => { state.editingId = null; });
 
     bindPay();
+    bindTeam();
 
     // Al volver a la pestaña, traer lo último
     document.addEventListener('visibilitychange', () => {

@@ -281,7 +281,7 @@ dialog {
   background: var(--surface); color: var(--ink);
 }
 dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px); }
-#clientForm, #newsForm, #kbForm, #expForm, #decForm, #adjForm { display: flex; flex-direction: column; height: 100%; }
+#clientForm, #newsForm, #kbForm, #expForm, #decForm, #adjForm, #teamForm { display: flex; flex-direction: column; height: 100%; }
 .check.pin { align-self: end; margin: 0 0 11px; }
 .dlg-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 16px 16px 12px; border-bottom: 1px solid var(--line); }
 .dlg-head h3 { font-size: 1.2rem; }
@@ -490,7 +490,7 @@ dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px)
   .board { scroll-snap-type: none; }
 
   dialog { width: min(720px, calc(100% - 48px)); height: auto; max-height: calc(100dvh - 48px); margin: auto; border-radius: 20px; box-shadow: var(--shadow-lg); overflow: hidden; }
-  #clientForm, #newsForm, #kbForm, #expForm, #decForm, #adjForm { height: auto; max-height: calc(100dvh - 48px); }
+  #clientForm, #newsForm, #kbForm, #expForm, #decForm, #adjForm, #teamForm { height: auto; max-height: calc(100dvh - 48px); }
   .form-grid { grid-template-columns: 1fr 1fr; }
   .form-grid .span2 { grid-column: 1 / -1; }
 }
@@ -664,3 +664,14 @@ dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px)
   .tabs button { padding: 20px 14px 17px; }
   .user { order: 2; }
 }
+
+/* ---------- Equipo en la web ---------- */
+.tw-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.tw-row:first-child { border-top: 0; }
+.tw-main { flex: 1 1 180px; min-width: 0; display: grid; }
+.tw-av { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; flex: none; background: var(--primary-soft); }
+.tw-av--i { display: grid; place-items: center; font-weight: 700; color: var(--primary); }
+.tw-photo { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.chks { display: flex; flex-wrap: wrap; gap: 8px; }
+.chk { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; }
+.lbl { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
