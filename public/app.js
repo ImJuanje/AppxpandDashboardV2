@@ -187,6 +187,8 @@
     if ($('#clientDialog').open) $('#clientDialog').close();
     if ($('#newsDialog').open) $('#newsDialog').close();
     if ($('#kbDialog').open) $('#kbDialog').close();
+    if ($('#profileDialog').open) $('#profileDialog').close();
+    state.profile = null; state.profiles = null;
     state.kb = []; state.kbSection = ''; state.kbQ = ''; state.kbOpen = new Map(); $('#kbQ').value = '';
     state.token = null; state.user = null; state.users = []; state.data = { clients: [] }; state.editingId = null;
     state.posts = []; state.ranking = null; state.newsMarks = new Set();
@@ -233,6 +235,7 @@
     $('#userName').textContent = state.user.name;
     $('#userRole').textContent = isAdmin() ? 'Administrador' : 'Comercial';
     $('#userAvatar').textContent = initials(state.user.name);
+    state.profile = null; state.profiles = null; loadMyProfile();
     $$('[data-admin]').forEach(el => { el.hidden = !isAdmin(); });
     $('#fOwnerWrap').hidden = !isAdmin();
     $('#resumenOwnerWrap').hidden = !isAdmin();
@@ -317,6 +320,7 @@
     $('#viewChat').hidden = v !== 'chat';
     $('#viewPay').hidden = v !== 'pay';
     if (v === 'pay') state.payAt = 0;
+    if (v === 'equipo') state.profiles = null;
     if (v === 'chat') chatEnter();
     $('#viewEquipo').hidden = v !== 'equipo';
     $$('#tabs button').forEach(b => {
@@ -334,7 +338,7 @@
     else if (state.view === 'kb') renderKb();
     else if (state.view === 'chat') renderChat();
     else if (state.view === 'pay') renderPay();
-    else { renderEquipo(); renderTeamWeb(); }
+    else { renderEquipo(); renderTeamWeb(); renderTeamProfiles(); }
     updateNewsBadge();
     updatePayBadge();
     updateLeadAlerts();
@@ -1824,6 +1828,87 @@
      EQUIPO EN LA WEB
      ============================================================ */
   const DOW = [[1, 'L'], [2, 'M'], [3, 'X'], [4, 'J'], [5, 'V'], [6, 'S'], [0, 'D']];
+  /* ---------- Mi perfil: foto, cumpleaños, teléfono y frase ---------- */
+  const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  const bdParts = s => /^(\d{2})-(\d{2})$/.exec(s || '');
+  const bdText = s => { const m = bdParts(s); return m ? `${+m[2]} de ${MESES[+m[1] - 1]}` : ''; };
+  function bdDays(s) { // días que faltan para el próximo cumpleaños
+    const m = bdParts(s); if (!m) return null;
+    const t = new Date(), base = Date.UTC(t.getFullYear(), t.getMonth(), t.getDate());
+    let n = Date.UTC(t.getFullYear(), +m[1] - 1, +m[2]);
+    if (n < base) n = Date.UTC(t.getFullYear() + 1, +m[1] - 1, +m[2]);
+    return Math.round((n - base) / 864e5);
+  }
+  const avatarHTML = p => p && p.photo ? `<img class="tw-av" src="${esc(p.photo)}" alt="">` : `<span class="tw-av tw-av--i">${esc(initials(p && p.name))}</span>`;
+  function paintAvatar() {
+    const a = $('#userAvatar');
+    if (state.profile && state.profile.photo) a.innerHTML = `<img src="${esc(state.profile.photo)}" alt="">`;
+    else a.textContent = initials(state.user.name);
+  }
+  async function loadMyProfile() {
+    try { state.profile = await api('GET', 'profile', undefined, true); paintAvatar(); } catch (e) { /* sin foto */ }
+  }
+  const pdlg = () => $('#profileDialog');
+  function openProfile() {
+    const p = state.profile || {}, m = bdParts(p.birthday);
+    state.pfPhoto = undefined;
+    $('#pfName').textContent = state.user.name;
+    $('#pfPrev').innerHTML = avatarHTML({ photo: p.photo, name: state.user.name });
+    $('#pfFile').value = '';
+    $('#pfMonth').value = m ? String(+m[1]) : ''; $('#pfDay').value = m ? String(+m[2]) : '';
+    $('#pfPhone').value = p.phone || ''; $('#pfBio').value = p.bio || '';
+    $('#pfError').hidden = true;
+    pdlg().showModal();
+  }
+  async function saveMyProfile(e) {
+    e.preventDefault();
+    const err = $('#pfError'), d = $('#pfDay').value, mo = $('#pfMonth').value;
+    try {
+      if (!!d !== !!mo) throw new Error('Elige el día y el mes del cumpleaños, o deja los dos vacíos.');
+      const body = { birthday: d ? String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0') : '', phone: $('#pfPhone').value.trim(), bio: $('#pfBio').value.trim() };
+      if (state.pfPhoto !== undefined) body.photo = state.pfPhoto;
+      state.profile = await api('PUT', 'profile', body);
+      state.profiles = null;
+      paintAvatar(); pdlg().close(); toast('Perfil guardado');
+      if (state.view === 'equipo') renderTeamProfiles();
+    } catch (x) { err.textContent = x.message; err.hidden = false; }
+  }
+  async function loadProfiles() {
+    if (state.profilesLoading) return;
+    state.profilesLoading = true;
+    try { state.profiles = await api('GET', 'profiles', undefined, true); } catch (e) { state.profiles = []; }
+    state.profilesLoading = false;
+    if (state.view === 'equipo') renderTeamProfiles();
+  }
+  function renderTeamProfiles() {
+    const out = $('#teamProfilesOut');
+    if (!out) return;
+    if (!state.profiles) { out.innerHTML = '<p class="empty">Cargando…</p>'; loadProfiles(); return; }
+    const next = state.profiles.filter(p => bdDays(p.birthday) !== null).sort((a, b) => bdDays(a.birthday) - bdDays(b.birthday)).slice(0, 3);
+    const head = next.length
+      ? '<p class="muted">🎂 Próximos cumpleaños: ' + next.map(p => `<strong>${esc(p.name)}</strong> (${esc(bdText(p.birthday))}${bdDays(p.birthday) === 0 ? ' · ¡hoy!' : ''})`).join(' · ') + '</p>'
+      : '<p class="muted">Aún nadie ha indicado su cumpleaños.</p>';
+    out.innerHTML = head + state.profiles.map(p => {
+      const info = [bdText(p.birthday) && '🎂 ' + bdText(p.birthday), p.phone && '📞 ' + p.phone].filter(Boolean).join(' · ');
+      return `<div class="tw-row">${avatarHTML(p)}<div class="tw-main"><strong>${esc(p.name)}</strong>
+        <small class="muted">${esc(info || 'Sin datos todavía')}</small>${p.bio ? `<small class="muted">${esc(p.bio)}</small>` : ''}</div></div>`;
+    }).join('');
+  }
+  function bindProfile() {
+    $('#pfDay').innerHTML = '<option value="">—</option>' + Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
+    $('#pfMonth').innerHTML = '<option value="">—</option>' + MESES.map((m, i) => `<option value="${i + 1}">${m}</option>`).join('');
+    $('#profileBtn').addEventListener('click', openProfile);
+    $('#profileForm').addEventListener('submit', saveMyProfile);
+    $('#pfClose').addEventListener('click', () => pdlg().close());
+    $('#pfCancel').addEventListener('click', () => pdlg().close());
+    $('#pfFile').addEventListener('change', async e => {
+      const f = e.target.files[0]; if (!f) return;
+      try { state.pfPhoto = await squarePhoto(f); $('#pfPrev').innerHTML = `<img class="tw-av" src="${state.pfPhoto}" alt="">`; $('#pfError').hidden = true; }
+      catch (x) { $('#pfError').textContent = x.message; $('#pfError').hidden = false; e.target.value = ''; }
+    });
+    $('#pfNoPhoto').addEventListener('click', () => { state.pfPhoto = ''; $('#pfPrev').innerHTML = avatarHTML({ name: state.user.name }); $('#pfFile').value = ''; });
+  }
+
   async function loadTeam() {
     try { state.team = await api('GET', 'team', undefined, true); renderTeamWeb(); } catch (e) { /* se reintenta al volver */ }
   }
@@ -2016,6 +2101,7 @@
 
     bindPay();
     bindTeam();
+    bindProfile();
 
     // Al volver a la pestaña, traer lo último
     document.addEventListener('visibilitychange', () => {

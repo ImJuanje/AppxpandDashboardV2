@@ -140,7 +140,8 @@ select { appearance: none; padding-right: 36px; background-image: url("data:imag
 .user__txt { display: none; line-height: 1.2; }
 .user__txt strong { display: block; font-size: .9rem; }
 .user__txt small { font-size: .75rem; }
-.avatar { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--navy); color: #fff; font-weight: 700; font-size: .85rem; flex: none; }
+.avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+.avatar { overflow: hidden; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--navy); color: #fff; font-weight: 700; font-size: .85rem; flex: none; }
 
 .tabs { order: 3; width: 100%; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; margin: 0 calc(var(--gutter) * -1); padding: 0 var(--gutter); }
 .tabs::-webkit-scrollbar { display: none; }

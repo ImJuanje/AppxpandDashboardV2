@@ -64,6 +64,7 @@
         <span class="avatar" id="userAvatar" aria-hidden="true"></span>
         <div class="user__txt"><strong id="userName"></strong><small id="userRole"></small></div>
         <button class="btn btn--ghost theme-btn" data-theme-toggle type="button" aria-label="Cambiar a modo oscuro"></button>
+        <button class="btn btn--ghost btn--sm" id="profileBtn" type="button">Mi perfil</button>
         <button class="btn btn--ghost btn--sm" id="logoutBtn" type="button">Salir</button>
       </div>
 
@@ -247,6 +248,12 @@
         <h3>Equipo en la web</h3>
         <p class="muted">Quién aparece en la página «Equipo» y con quién pueden agendar una llamada los clientes. El email no se publica: solo sirve para avisar de cada cita. Foto y nombre son opcionales y deben contar con el visto bueno de cada persona.</p>
         <div id="teamWebOut"></div>
+      </article>
+
+      <article class="card">
+        <h3>Perfiles del equipo</h3>
+        <p class="muted">Foto, cumpleaños y datos que cada persona ha querido compartir. Solo los ves tú; cada persona edita los suyos desde «Mi perfil».</p>
+        <div id="teamProfilesOut"></div>
       </article>
 
       <div class="grid2">
@@ -512,6 +519,33 @@
       <button type="button" class="btn btn--danger-ghost" id="kbDelete" hidden>Eliminar</button>
       <span class="spacer"></span>
       <button type="button" class="btn btn--ghost" id="kbCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Guardar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO MI PERFIL ============ -->
+<dialog id="profileDialog" aria-labelledby="pfTitle">
+  <form id="profileForm" novalidate>
+    <header class="dlg-head">
+      <div><h3 id="pfTitle">Mi perfil</h3><small class="muted" id="pfName"></small></div>
+      <button type="button" class="icon-btn" id="pfClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <div class="form-grid">
+        <div class="span2"><span class="lbl">Foto</span>
+          <div class="tw-photo"><span id="pfPrev"></span><input id="pfFile" type="file" accept="image/*"><button type="button" class="btn btn--ghost btn--sm" id="pfNoPhoto">Quitar foto</button></div></div>
+        <label>Cumpleaños: día<select id="pfDay"></select></label>
+        <label>Cumpleaños: mes<select id="pfMonth"></select></label>
+        <label class="span2">Teléfono<input id="pfPhone" type="tel" maxlength="30" inputmode="tel" placeholder="600 000 000"></label>
+        <label class="span2">Algo sobre ti (aficiones, qué te gusta…)<textarea id="pfBio" rows="2" maxlength="200" placeholder="Ej. Me encanta la montaña y el café."></textarea></label>
+        <small class="muted span2">Todo es voluntario. Solo lo ve la administración, y puedes cambiarlo o borrarlo cuando quieras.</small>
+      </div>
+      <p id="pfError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="pfCancel">Cancelar</button>
       <button type="submit" class="btn btn--primary">Guardar</button>
     </footer>
   </form>
