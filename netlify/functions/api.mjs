@@ -103,6 +103,11 @@ function newCode() {
   for (let i = 0; i < 12; i++) r += A[randomInt(A.length)];
   return `${r.slice(0, 4)}-${r.slice(4, 8)}-${r.slice(8)}`;
 }
+/* El código se acepta escrito de cualquier forma: en minúsculas, con espacios, sin guiones o con guiones largos */
+function normCode(raw) {
+  const t = String(raw ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return t.length === 12 ? `${t.slice(0, 4)}-${t.slice(4, 8)}-${t.slice(8)}` : String(raw ?? '').trim().toUpperCase();
+}
 async function freshCode(db) {
   for (;;) {
     const code = newCode(), h = sha(code);
@@ -271,6 +276,7 @@ async function login(req, ctx, db) {
   } else {
     c = str(b.code, 64).toUpperCase();
     if (!c) throw new HttpError(400, 'Introduce tu código de alta.');
+    const cn = normCode(c);
   }
   const lock = await lockState(db, ip);
 
@@ -284,9 +290,10 @@ async function login(req, ctx, db) {
   } else if (safeEq(sha(c), sha(adminCode()))) {
     user = ADMIN; v = sha(adminCode()).slice(0, 8);
   } else {
-    const ref = await db.get('h/' + sha(c), { type: 'json' });
+    const ref = await db.get('h/' + sha(normCode(c)), { type: 'json' });
     const u = ref && (await db.get('u/' + ref.id, { type: 'json' }));
-    if (u) { user = pub(u); v = sha(c).slice(0, 8); }
+    // la sesión se ata al código vigente de la cuenta (administradores y comerciales por igual)
+    if (u && u.codeHash === sha(normCode(c))) { user = pub(u); v = u.codeHash.slice(0, 8); }
   }
 
   if (!user) {
@@ -1280,7 +1287,7 @@ export default async (req, ctx) => {
       if (!id && m === 'POST') {
         const b = await readBody(req);
         const name = str(b.name, 40);
-        if (!name) throw new HttpError(400, 'Escribe el nombre del comercial.');
+        if (!name) throw new HttpError(400, 'Escribe el nombre de la persona.');
         return json(await createUser(db, name, b.role === 'admin' ? 'admin' : 'comercial'), 201);
       }
       if (id && !isId(id)) throw new HttpError(404, 'Usuario no encontrado.');
