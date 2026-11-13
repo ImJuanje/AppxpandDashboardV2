@@ -32,18 +32,31 @@
       <span class="brand__name">App<b>Xpand</b></span>
     </a>
     <h1>Acceso comerciales</h1>
-    <p class="muted">Introduce el código de alta que te ha facilitado AppXpand.</p>
+    <p class="muted" id="loginHint">Introduce el código de alta que te ha facilitado AppXpand.</p>
 
-    <form id="loginForm" autocomplete="off" novalidate>
-      <label for="code">Código de alta</label>
-      <div class="pw">
-        <input id="code" name="code" type="password" inputmode="text" autocapitalize="characters"
-               autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX" required>
-        <button type="button" id="toggleCode" class="pw__btn" aria-label="Mostrar u ocultar el código">Ver</button>
+    <form id="loginForm" autocomplete="on" novalidate>
+      <div id="loginCodeBox">
+        <label for="code">Código de alta</label>
+        <div class="pw">
+          <input id="code" name="code" type="password" inputmode="text" autocapitalize="characters"
+                 autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX" required>
+          <button type="button" id="toggleCode" class="pw__btn" aria-label="Mostrar u ocultar el código">Ver</button>
+        </div>
+      </div>
+      <div id="loginPassBox" hidden>
+        <label for="loginUser">Usuario</label>
+        <input id="loginUser" name="username" type="text" autocomplete="username" autocapitalize="none"
+               spellcheck="false" placeholder="Tu nombre o usuario">
+        <label for="loginPass">Contraseña</label>
+        <div class="pw">
+          <input id="loginPass" name="password" type="password" autocomplete="current-password" placeholder="Tu contraseña">
+          <button type="button" id="togglePass" class="pw__btn" aria-label="Mostrar u ocultar la contraseña">Ver</button>
+        </div>
       </div>
       <label class="check"><input type="checkbox" id="remember"> <span>Mantener sesión en este dispositivo</span></label>
       <p id="loginError" class="error" role="alert" hidden></p>
       <button class="btn btn--primary btn--block" type="submit">Entrar</button>
+      <button class="linkbtn" type="button" id="loginSwitch">Entrar con usuario y contraseña</button>
     </form>
 
     <a class="back" href="https://appxpand.netlify.app">← Volver a la web</a>
@@ -242,6 +255,17 @@
 
       <article class="card card--flush">
         <div id="teamOut"></div>
+      </article>
+
+      <article class="card">
+        <div class="vis-head">
+          <h3>Accesos al dashboard</h3>
+          <label class="vis-range">Periodo
+            <select id="visitsDays"><option value="7">Últimos 7 días</option><option value="14">Últimos 14 días</option><option value="30">Últimos 30 días</option></select>
+          </label>
+        </div>
+        <p class="muted">Cuántas veces entra cada comercial. Una entrada nueva cuenta cuando pasan más de 30 minutos desde la anterior, así que recargar la página no suma. Solo lo ve la administración.</p>
+        <div id="visitsOut"></div>
       </article>
 
       <article class="card">
@@ -524,6 +548,31 @@
   </form>
 </dialog>
 
+<!-- ============ DIÁLOGO DAR DE BAJA (reparto de clientes) ============ -->
+<dialog id="reassignDialog" aria-labelledby="raTitle">
+  <form id="reassignForm" novalidate>
+    <header class="dlg-head">
+      <div><h3 id="raTitle">Dar de baja</h3><small class="muted" id="raSub"></small></div>
+      <button type="button" class="icon-btn" id="raClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <p class="muted" id="raIntro"></p>
+      <div class="ra-bulk" id="raBulk">
+        <label>Asignar todos a<select id="raAll"></select></label>
+        <button type="button" class="btn btn--ghost btn--sm" id="raAllBtn">Aplicar a todos</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="raSplit">Repartir a partes iguales</button>
+      </div>
+      <div class="ra-list" id="raList"></div>
+      <p id="raError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="raCancel">Cancelar</button>
+      <button type="submit" class="btn btn--danger" id="raOk">Dar de baja</button>
+    </footer>
+  </form>
+</dialog>
+
 <!-- ============ DIÁLOGO MI PERFIL ============ -->
 <dialog id="profileDialog" aria-labelledby="pfTitle">
   <form id="profileForm" novalidate>
@@ -540,6 +589,18 @@
         <label class="span2">Teléfono<input id="pfPhone" type="tel" maxlength="30" inputmode="tel" placeholder="600 000 000"></label>
         <label class="span2">Algo sobre ti (aficiones, qué te gusta…)<textarea id="pfBio" rows="2" maxlength="200" placeholder="Ej. Me encanta la montaña y el café."></textarea></label>
         <small class="muted span2">Todo es voluntario. Solo lo ve la administración, y puedes cambiarlo o borrarlo cuando quieras.</small>
+
+        <div class="span2 pf-pass" id="pfPassBox" hidden>
+          <span class="lbl">Contraseña de acceso</span>
+          <small class="muted" id="pfPassHint"></small>
+          <div class="form-grid">
+            <label class="span2" id="pfCurWrap">Contraseña actual<input id="pfPwCur" type="password" autocomplete="current-password"></label>
+            <label>Nueva contraseña<input id="pfPwNew" type="password" maxlength="72" autocomplete="new-password"></label>
+            <label>Repite la nueva<input id="pfPwNew2" type="password" maxlength="72" autocomplete="new-password"></label>
+          </div>
+          <p id="pfPwError" class="error" role="alert" hidden></p>
+          <button type="button" class="btn btn--ghost btn--sm" id="pfPwSave">Crear contraseña</button>
+        </div>
       </div>
       <p id="pfError" class="error" role="alert" hidden></p>
     </div>

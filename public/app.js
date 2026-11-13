@@ -162,22 +162,44 @@
     e.textContent = msg || ''; e.hidden = !msg;
   }
 
+  function setLoginMode(mode) {
+    state.loginMode = mode;
+    const pass = mode === 'pass';
+    $('#loginCodeBox').hidden = pass;
+    $('#loginPassBox').hidden = !pass;
+    $('#loginSwitch').textContent = pass ? 'Entrar con mi código de alta' : 'Entrar con usuario y contraseña';
+    $('#loginHint').textContent = pass
+      ? 'Entra con tu usuario y la contraseña que creaste en «Mi perfil».'
+      : 'Introduce el código de alta que te ha facilitado AppXpand.';
+    showLoginError('');
+    (pass ? $('#loginUser') : $('#code')).focus();
+  }
+
   async function onLogin(ev) {
     ev.preventDefault();
-    const code = $('#code').value.trim();
-    if (!code) { showLoginError('Introduce tu código de alta.'); return; }
+    const pass = state.loginMode === 'pass';
+    const remember = $('#remember').checked;
+    let payload;
+    if (pass) {
+      const user = $('#loginUser').value.trim(), password = $('#loginPass').value;
+      if (!user || !password) { showLoginError('Escribe tu usuario y tu contraseña.'); return; }
+      payload = { user, password, remember };
+    } else {
+      const code = $('#code').value.trim();
+      if (!code) { showLoginError('Introduce tu código de alta.'); return; }
+      payload = { code, remember };
+    }
     const btn = $('#loginForm button[type=submit]');
     btn.disabled = true;
     try {
-      const remember = $('#remember').checked;
-      const r = await api('POST', 'login', { code, remember });
+      const r = await api('POST', 'login', payload);
       writeSession({ token: r.token, exp: r.exp }, remember);
       showLoginError('');
-      $('#code').value = '';
+      $('#code').value = ''; $('#loginUser').value = ''; $('#loginPass').value = '';
       await start(r.token);
     } catch (e) {
       if (!e.handled) showLoginError(e.message);
-      $('#code').select();
+      (pass ? $('#loginPass') : $('#code')).select();
     } finally { btn.disabled = false; }
   }
 
@@ -196,7 +218,10 @@
     $('#appView').hidden = true;
     $('#loginView').hidden = false;
     showLoginError(typeof msg === 'string' ? msg : '');
-    $('#code').focus();
+    $('#loginUser').value = ''; $('#loginPass').value = '';
+    state.visits = null; state.removing = null;
+    if ($('#reassignDialog').open) $('#reassignDialog').close();
+    (state.loginMode === 'pass' ? $('#loginUser') : $('#code')).focus();
   }
 
   /* ============================================================
@@ -235,6 +260,7 @@
     $('#userName').textContent = state.user.name;
     $('#userRole').textContent = isAdmin() ? 'Administrador' : 'Comercial';
     $('#userAvatar').textContent = initials(state.user.name);
+    if (!isAdmin()) api('POST', 'visit', undefined, true).catch(() => { /* el registro de accesos nunca debe molestar */ });
     state.profile = null; state.profiles = null; loadMyProfile();
     $$('[data-admin]').forEach(el => { el.hidden = !isAdmin(); });
     $('#fOwnerWrap').hidden = !isAdmin();
@@ -320,7 +346,7 @@
     $('#viewChat').hidden = v !== 'chat';
     $('#viewPay').hidden = v !== 'pay';
     if (v === 'pay') state.payAt = 0;
-    if (v === 'equipo') state.profiles = null;
+    if (v === 'equipo') { state.profiles = null; state.visits = null; }
     if (v === 'chat') chatEnter();
     $('#viewEquipo').hidden = v !== 'equipo';
     $$('#tabs button').forEach(b => {
@@ -338,7 +364,7 @@
     else if (state.view === 'kb') renderKb();
     else if (state.view === 'chat') renderChat();
     else if (state.view === 'pay') renderPay();
-    else { renderEquipo(); renderTeamWeb(); renderTeamProfiles(); }
+    else { renderEquipo(); renderVisits(); renderTeamWeb(); renderTeamProfiles(); }
     updateNewsBadge();
     updatePayBadge();
     updateLeadAlerts();
@@ -1263,14 +1289,95 @@
       showCode(`Nuevo código para ${r.user.name}:`, r.code);
     } catch (e) { fail(e); }
   }
+  /* ---------- Dar de baja con reparto de clientes ---------- */
+  const radlg = () => $('#reassignDialog');
+  const raOptions = (exceptId, sel) => state.users.filter(u => u.id !== exceptId)
+    .map(u => `<option value="${esc(u.id)}"${u.id === sel ? ' selected' : ''}>${esc(u.id === 'admin' ? 'Administración (tú)' : u.name)}</option>`).join('');
+
   async function removeUser(id) {
+    await refresh(true);   // datos al día: otro comercial/la web pueden haber movido clientes hace unos segundos
     const u = userById(id); if (!u) return;
-    if (!confirm(`¿Dar de baja a ${u.name}? Perderá el acceso y sus clientes pasarán a ti.`)) return;
+    const mine = state.data.clients.filter(c => c.owner === id).sort((a, b) => a.business.localeCompare(b.business, 'es'));
+    state.removing = { id, name: u.name };
+    $('#raTitle').textContent = `Dar de baja a ${u.name}`;
+    $('#raSub').textContent = mine.length ? plural(mine.length, 'cliente por reasignar', 'clientes por reasignar') : 'Sin clientes asignados';
+    $('#raIntro').textContent = 'Perderá el acceso a la plataforma y se borrará su chat privado. ' +
+      (mine.length ? 'Elige a quién pasa cada cliente; si no tocas nada, pasan a ti.' : 'No tiene clientes, así que no hay nada que repartir.');
+    $('#raBulk').hidden = !mine.length;
+    $('#raAll').innerHTML = raOptions(id);
+    $('#raList').innerHTML = mine.map(c => {
+      const st = (STATUSES.find(x => x.id === c.status) || {}).label || c.status;
+      return `<div class="ra-row"><div><strong>${esc(c.business)}</strong><small class="muted">${esc(st)}${c.value ? ' · ' + money(c.value) : ''}</small></div>
+        <select data-cid="${esc(c.id)}" aria-label="Nuevo responsable de ${esc(c.business)}">${raOptions(id, 'admin')}</select></div>`;
+    }).join('');
+    $('#raError').hidden = true;
+    radlg().showModal();
+  }
+  async function submitRemove(e) {
+    e.preventDefault();
+    const r = state.removing; if (!r) return;
+    const assign = {};
+    $$('#raList select').forEach(sel => { assign[sel.dataset.cid] = sel.value; });
+    const btn = $('#raOk'); btn.disabled = true;
     try {
-      await api('DELETE', `users/${encodeURIComponent(id)}`);
+      const res = await api('DELETE', `users/${encodeURIComponent(r.id)}`, { assign });
+      radlg().close(); state.removing = null;
       await refresh(true);
-      toast(`${u.name} dado de baja`);
-    } catch (e) { fail(e); }
+      toast(`${r.name} dado de baja` + (res.moved ? ` · ${plural(res.moved, 'cliente reasignado', 'clientes reasignados')}` : ''));
+    } catch (x) { $('#raError').textContent = x.message; $('#raError').hidden = false; }
+    finally { btn.disabled = false; }
+  }
+  function bindReassign() {
+    $('#reassignForm').addEventListener('submit', submitRemove);
+    $('#raClose').addEventListener('click', () => radlg().close());
+    $('#raCancel').addEventListener('click', () => radlg().close());
+    $('#raAllBtn').addEventListener('click', () => { const v = $('#raAll').value; $$('#raList select').forEach(sel => { sel.value = v; }); });
+    $('#raSplit').addEventListener('click', () => {
+      const id = state.removing && state.removing.id;
+      const pool = state.users.filter(u => u.id !== id && u.role === 'comercial').map(u => u.id);
+      const ids = pool.length ? pool : ['admin'];
+      $$('#raList select').forEach((sel, i) => { sel.value = ids[i % ids.length]; });
+    });
+  }
+
+  /* ---------- Accesos al dashboard (solo admin) ---------- */
+  async function loadVisits() {
+    if (state.visitsLoading) return;
+    state.visitsLoading = true;
+    try { state.visits = await api('GET', `visits?days=${state.visitsDays || 7}`, undefined, true); }
+    catch (e) { state.visits = { error: true }; }
+    state.visitsLoading = false; state.visitsAt = Date.now();
+    if (state.view === 'equipo') renderVisits();
+  }
+  function renderVisits() {
+    const out = $('#visitsOut'); if (!out) return;
+    const V = state.visits;
+    if (!V) { out.innerHTML = '<p class="empty">Cargando…</p>'; loadVisits(); return; }
+    if (V.error) { out.innerHTML = '<p class="empty">No se han podido cargar los accesos.</p>'; return; }
+    if (Date.now() - (state.visitsAt || 0) > 55e3) loadVisits();   // se actualiza solo mientras miras la pestaña
+    const people = state.users.filter(u => u.id !== 'admin');
+    if (!people.length) { out.innerHTML = '<p class="empty">Aún no hay comerciales.</p>'; return; }
+    const get = (uid, d) => (V.rows[uid] && V.rows[uid][d]) || null;
+    const max = Math.max(1, ...people.flatMap(u => V.days.map(d => (get(u.id, d) || {}).n || 0)));
+    const hh = iso => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    const rows = people.map(u => {
+      const t = get(u.id, V.today);
+      const total = V.days.reduce((a, d) => a + ((get(u.id, d) || {}).n || 0), 0);
+      const last = V.days.map(d => (get(u.id, d) || {}).last || '').filter(Boolean).sort().pop();
+      const bars = V.days.map(d => {
+        const n = (get(u.id, d) || {}).n || 0;
+        const lab = new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
+        return `<span class="vbar${n ? ' has' : ''}${d === V.today ? ' today' : ''}" title="${esc(lab)}: ${plural(n, 'entrada', 'entradas')}"><i style="height:${n ? Math.max(18, Math.round(n / max * 100)) : 10}%"></i></span>`;
+      }).join('');
+      return `<tr>
+        <td class="t-name"><div class="t-who"><span class="avatar">${esc(initials(u.name))}</span><div><strong>${esc(u.name)}</strong><small>${u.role === 'admin' ? 'Administrador' : 'Comercial'}</small></div></div></td>
+        <td data-label="Hoy" class="vis-today">${t ? `<strong>${plural(t.n, 'entrada', 'entradas')}</strong><small class="muted">${esc((t.times || []).map(hh).join(' · '))}</small>` : '<span class="muted">No ha entrado hoy</span>'}</td>
+        <td data-label="Último acceso">${last ? esc(fmtDT(last)) : '—'}</td>
+        <td data-label="Periodo"><span class="vbars" role="img" aria-label="Entradas por día">${bars}</span></td>
+        <td data-label="Total">${total}</td>
+      </tr>`;
+    }).join('');
+    out.innerHTML = `<table class="team"><thead><tr><th>Comercial</th><th>Hoy</th><th>Último acceso</th><th>Últimos ${V.days.length} días</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   /* ============================================================
@@ -1858,7 +1965,38 @@
     $('#pfMonth').value = m ? String(+m[1]) : ''; $('#pfDay').value = m ? String(+m[2]) : '';
     $('#pfPhone').value = p.phone || ''; $('#pfBio').value = p.bio || '';
     $('#pfError').hidden = true;
+    paintPwBox();
     pdlg().showModal();
+  }
+  function paintPwBox() {
+    const box = $('#pfPassBox'); if (!box) return;
+    const ok = !!state.user && state.user.role === 'comercial';
+    box.hidden = !ok;
+    if (!ok) return;
+    const has = !!state.user.hasPassword;
+    $('#pfCurWrap').hidden = !has;
+    $('#pfPassHint').innerHTML = has
+      ? `Ya tienes contraseña. Entra con el usuario <strong>${esc(state.user.id)}</strong> y tu contraseña, o con tu código de alta.`
+      : `Opcional: crea una contraseña (mínimo 8 caracteres) y entra con el usuario <strong>${esc(state.user.id)}</strong> sin teclear el código largo. El código seguirá funcionando.`;
+    $('#pfPwSave').textContent = has ? 'Cambiar contraseña' : 'Crear contraseña';
+    ['#pfPwCur', '#pfPwNew', '#pfPwNew2'].forEach(i => { $(i).value = ''; });
+    $('#pfPwError').hidden = true;
+  }
+  async function savePassword() {
+    const err = $('#pfPwError');
+    const bad = m => { err.textContent = m; err.hidden = false; };
+    const cur = $('#pfPwCur').value, p1 = $('#pfPwNew').value, p2 = $('#pfPwNew2').value;
+    if (state.user.hasPassword && !cur) return bad('Escribe tu contraseña actual.');
+    if (p1.length < 8) return bad('La nueva contraseña debe tener al menos 8 caracteres.');
+    if (p1 !== p2) return bad('Las dos contraseñas no coinciden.');
+    const btn = $('#pfPwSave'); btn.disabled = true;
+    try {
+      await api('PUT', 'password', { current: cur, password: p1 });
+      state.user.hasPassword = true;
+      paintPwBox();
+      toast('Contraseña guardada');
+    } catch (x) { bad(x.message); }
+    finally { btn.disabled = false; }
   }
   async function saveMyProfile(e) {
     e.preventDefault();
@@ -1900,6 +2038,8 @@
     $('#profileBtn').addEventListener('click', openProfile);
     $('#profileForm').addEventListener('submit', saveMyProfile);
     $('#pfClose').addEventListener('click', () => pdlg().close());
+    $('#pfPwSave').addEventListener('click', savePassword);
+    ['#pfPwCur', '#pfPwNew', '#pfPwNew2'].forEach(i => $(i).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); savePassword(); } }));
     $('#pfCancel').addEventListener('click', () => pdlg().close());
     $('#pfFile').addEventListener('change', async e => {
       const f = e.target.files[0]; if (!f) return;
@@ -1982,6 +2122,11 @@
     $('#toggleCode').addEventListener('click', () => {
       const i = $('#code'); i.type = i.type === 'password' ? 'text' : 'password';
     });
+    $('#togglePass').addEventListener('click', () => {
+      const i = $('#loginPass'); i.type = i.type === 'password' ? 'text' : 'password';
+    });
+    $('#loginSwitch').addEventListener('click', () => setLoginMode(state.loginMode === 'pass' ? 'code' : 'pass'));
+    $('#visitsDays').addEventListener('change', e => { state.visitsDays = Number(e.target.value) || 7; state.visits = null; renderVisits(); });
     $('#logoutBtn').addEventListener('click', () => logout());
     document.querySelectorAll('[data-theme-toggle]').forEach(b => b.addEventListener('click', () => setTheme(curTheme() === 'dark' ? 'light' : 'dark')));
     setTheme(curTheme(), true);
@@ -2102,6 +2247,7 @@
     bindPay();
     bindTeam();
     bindProfile();
+    bindReassign();
 
     // Al volver a la pestaña, traer lo último
     document.addEventListener('visibilitychange', () => {

@@ -680,3 +680,32 @@ dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px)
 .chks { display: flex; flex-wrap: wrap; gap: 8px; }
 .chk { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; }
 .lbl { display: block; font-size: .85rem; font-weight: 600; margin-bottom: 6px; }
+
+
+/* ---------- v4.10: contraseña, accesos y baja con reparto ---------- */
+.linkbtn { display: block; margin: 14px auto 0; background: none; border: 0; padding: 8px; color: var(--primary); font: inherit; font-size: .9rem; font-weight: 600; cursor: pointer; }
+.linkbtn:hover { text-decoration: underline; }
+#loginPassBox input#loginUser { margin-bottom: 14px; }
+.pf-pass { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+.pf-pass .lbl { margin-bottom: 0; }
+.pf-pass .btn { justify-self: start; }
+
+.vis-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.vis-range { display: flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--muted); }
+#visitsOut { margin-top: 8px; }
+.vbars { display: inline-flex; align-items: flex-end; gap: 3px; height: 34px; }
+.vbar { display: flex; align-items: flex-end; width: 8px; height: 100%; }
+.vbar i { display: block; width: 100%; border-radius: 3px; background: var(--line); }
+.vbar.has i { background: var(--primary); }
+.vbar.today i { box-shadow: 0 0 0 2px var(--primary-soft); }
+.vis-today small { display: block; }
+
+.ra-bulk { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 12px 0; }
+.ra-bulk label { display: grid; gap: 4px; font-size: .82rem; font-weight: 600; }
+.ra-list { display: grid; }
+.ra-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--line); }
+.ra-row:first-child { border-top: 0; }
+.ra-row strong { display: block; }
+.ra-row select { min-width: 170px; }
+.ra-row > div { flex: 1 1 140px; min-width: 0; }
+.ra-row select { width: auto; flex: 0 0 auto; }
