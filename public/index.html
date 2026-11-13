@@ -73,6 +73,7 @@
         <button type="button" data-view="kb">Centro comercial</button>
         <button type="button" data-view="news">AppXnews <span class="tab-badge" id="newsBadge" hidden>0</span></button>
         <button type="button" data-view="chat">Chat <span class="tab-badge" id="chatBadge" hidden>0</span></button>
+        <button type="button" data-view="pay">Pagos <span class="tab-badge" id="payBadge" hidden>0</span></button>
         <button type="button" data-view="equipo" data-admin>Equipo</button>
       </nav>
     </div>
@@ -216,6 +217,18 @@
     </section>
 
     <!-- EQUIPO (admin) -->
+    <!-- PAGOS Y GASTOS -->
+    <section id="viewPay" aria-labelledby="payTitle" hidden>
+      <div class="sec-head">
+        <div>
+          <h2 id="payTitle">Pagos y gastos</h2>
+          <p class="muted" id="paySub"></p>
+        </div>
+        <div class="seg" id="paySeg" role="group" aria-label="Vista de pagos"></div>
+      </div>
+      <div id="payOut"></div>
+    </section>
+
     <section id="viewEquipo" aria-labelledby="equipoTitle" hidden>
       <div class="sec-head">
         <div>
@@ -289,6 +302,11 @@
         <label>Ciudad<select id="cCity"></select></label>
         <label>Estado<select id="cStatus"></select></label>
         <label>Valor estimado (€)<input id="cValue" type="number" min="0" step="1" inputmode="numeric" placeholder="330"></label>
+        <label>Pack de mantenimiento prepago
+          <select id="cPack"><option value="0">Sin pack</option><option value="3">3 meses</option><option value="6">6 meses</option><option value="12">12 meses</option></select>
+        </label>
+        <label>Importe del pack (€)<input id="cPackValue" type="number" min="0" step="0.01" inputmode="decimal" placeholder="199,47"></label>
+        <small class="muted span2">El pack va aparte: no lo incluyas en el valor. Cuenta para tu comisión solo la parte proporcional (3 m → 1 mes, 6 m → 2, 12 m → 3).</small>
         <label>Próximo seguimiento<input id="cNext" type="date"></label>
         <label class="span2" id="cOwnerWrap" hidden>Comercial asignado<select id="cOwner"></select></label>
         <label class="span2">Notas<textarea id="cNotes" rows="3" maxlength="1500" placeholder="Qué necesita, objeciones, siguiente paso…"></textarea></label>
@@ -345,6 +363,79 @@
       <span class="spacer"></span>
       <button type="button" class="btn btn--ghost" id="newsCancel">Cancelar</button>
       <button type="submit" class="btn btn--primary">Publicar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO NUEVO GASTO ============ -->
+<dialog id="expDialog" aria-labelledby="expDlgTitle">
+  <form id="expForm" novalidate>
+    <header class="dlg-head">
+      <div><h3 id="expDlgTitle">Añadir gasto</h3><small class="muted">Se revisa antes de sumarse a tu pago</small></div>
+      <button type="button" class="icon-btn" id="expClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label class="span2">Tipo de gasto<select id="xCat"></select></label>
+        <small class="muted span2" id="xCapHint"></small>
+        <label class="span2">Concepto *<input id="xConcept" type="text" maxlength="100" required placeholder="Ej. Gasolina visita peluquería en Albacete"></label>
+        <label>Importe (€) *<input id="xAmount" type="number" min="0.01" step="0.01" inputmode="decimal" required placeholder="25,50"></label>
+        <label>Fecha *<input id="xDate" type="date" required></label>
+        <label class="span2">Justificante * (foto o PDF)<input id="xFile" type="file" accept="image/*,application/pdf" required></label>
+        <label class="span2">Nota (opcional)<textarea id="xNote" rows="2" maxlength="500" placeholder="Cliente o visita a la que corresponde"></textarea></label>
+      </div>
+      <p id="expError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="expCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Enviar gasto</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO REVISAR GASTO (admin) ============ -->
+<dialog id="decDialog" aria-labelledby="decDlgTitle">
+  <form id="decForm" novalidate onsubmit="return false">
+    <header class="dlg-head">
+      <div><h3 id="decDlgTitle">Revisar gasto</h3></div>
+      <button type="button" class="icon-btn" id="decClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <p id="decInfo"></p>
+      <div class="form-grid">
+        <label>Importe a aprobar (€)<input id="dAmount" type="number" min="0.01" step="0.01" inputmode="decimal"></label>
+        <label class="span2">Mensaje para el comercial (obligatorio si rechazas)<textarea id="dNote" rows="2" maxlength="300"></textarea></label>
+      </div>
+      <p id="decError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <button type="button" class="btn btn--danger" id="decReject">Rechazar</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--primary" id="decApprove">Aprobar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO AJUSTE O BONO (admin) ============ -->
+<dialog id="adjDialog" aria-labelledby="adjDlgTitle">
+  <form id="adjForm" novalidate>
+    <header class="dlg-head">
+      <div><h3 id="adjDlgTitle">Ajuste o bono</h3><small class="muted">Se suma (o resta) en su próximo pago</small></div>
+      <button type="button" class="icon-btn" id="adjClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label class="span2">Comercial<select id="aOwner"></select></label>
+        <label class="span2">Concepto *<input id="aConcept" type="text" maxlength="100" required placeholder="Ej. Bono por objetivo trimestral"></label>
+        <label class="span2">Importe (€) *<input id="aAmount" type="number" step="0.01" inputmode="decimal" required placeholder="50 (negativo para descontar)"></label>
+      </div>
+      <p id="adjError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="adjCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Añadir</button>
     </footer>
   </form>
 </dialog>

@@ -61,6 +61,7 @@
     newsFilter: '',
     newsSeen: '',
     newsMarks: new Set(),
+    pay: null, payAt: 0, payTab: 'resumen', payPending: 0, payOpen: new Set(), decId: '',
     chat: freshChat()
   };
   const isAdmin = () => !!state.user && state.user.role === 'admin';
@@ -206,12 +207,14 @@
     state.kb = d.kb || [];
     state.ranking = d.ranking || null;
     state.settings = d.settings || { showRanking: true };
+    state.payPending = d.payPending || 0;
   }
 
   async function start(token) {
     state.token = token;
     applySync(await api('GET', 'sync'));
 
+    state.pay = null; state.payTab = 'resumen'; state.payOpen = new Set();
     state.view = 'resumen';
     state.cview = 'lista';
     state.resumenOwner = '';
@@ -307,6 +310,8 @@
     $('#viewNews').hidden = v !== 'news';
     $('#viewKb').hidden = v !== 'kb';
     $('#viewChat').hidden = v !== 'chat';
+    $('#viewPay').hidden = v !== 'pay';
+    if (v === 'pay') state.payAt = 0;
     if (v === 'chat') chatEnter();
     $('#viewEquipo').hidden = v !== 'equipo';
     $$('#tabs button').forEach(b => {
@@ -323,8 +328,10 @@
     else if (state.view === 'news') renderNews();
     else if (state.view === 'kb') renderKb();
     else if (state.view === 'chat') renderChat();
+    else if (state.view === 'pay') renderPay();
     else renderEquipo();
     updateNewsBadge();
+    updatePayBadge();
   }
 
   /* ============================================================
@@ -1269,6 +1276,8 @@
     $('#cCity').value = c ? (c.city || CITIES[0]) : CITIES[0];
     $('#cStatus').value = c ? c.status : 'nuevo';
     $('#cValue').value = c && c.value ? c.value : '';
+    $('#cPack').value = c && c.pack ? String(c.pack) : '0';
+    $('#cPackValue').value = c && c.packValue ? c.packValue : '';
     $('#cNext').value = c ? (c.next || '') : '';
     $('#cNotes').value = c ? c.notes : '';
     $('#cOwnerWrap').hidden = !isAdmin();
@@ -1305,7 +1314,7 @@
     const body = {
       business, contact: $('#cContact').value.trim(), phone: $('#cPhone').value.trim(), email,
       type: $('#cType').value, service: $('#cService').value, city: $('#cCity').value, status: $('#cStatus').value,
-      value: Math.max(0, Number($('#cValue').value) || 0), next: $('#cNext').value || '', notes: $('#cNotes').value.trim(),
+      value: Math.max(0, Number($('#cValue').value) || 0), pack: Number($('#cPack').value) || 0, packValue: Math.max(0, Number($('#cPackValue').value) || 0), next: $('#cNext').value || '', notes: $('#cNotes').value.trim(),
       owner: isAdmin() ? $('#cOwner').value : state.user.id
     };
     const id = state.editingId;
@@ -1451,6 +1460,343 @@
   }
 
   /* ============================================================
+     PAGOS Y GASTOS
+     ============================================================ */
+  const money2 = n => Number(n || 0).toLocaleString('es-ES', { style: 'currency', currency: 'EUR' });
+  const pct = r => Math.round(r * 100) + ' %';
+  const fmtDayL = s => parseDay(s).toLocaleDateString('es-ES', { day: 'numeric', month: 'long' });
+  const plural = (n, a, b) => `${n} ${n === 1 ? a : b}`;
+  const catOf = id => ((state.pay && state.pay.rules.cats.find(c => c.id === id)) || { icon: '📦', label: id });
+  const EXP_ST = { pendiente: ['Pendiente', 'pill--amber'], aprobado: ['Aprobado', 'pill--green'], rechazado: ['Rechazado', 'pill--red'] };
+
+  async function loadPay(quiet) {
+    try {
+      state.pay = await api('GET', 'pay', undefined, quiet);
+      state.payAt = Date.now();
+      if (isAdmin()) state.payPending = state.pay.expenses.filter(e => e.status === 'pendiente').length;
+      updatePayBadge();
+      if (state.view === 'pay') renderPay(true);
+    } catch (e) { if (!quiet) fail(e); }
+  }
+  function updatePayBadge() {
+    const b = $('#payBadge'), n = isAdmin() ? state.payPending : 0;
+    b.hidden = !n; b.textContent = n;
+  }
+
+  function tiersHTML(P, rate) {
+    let from = 0;
+    return '<div class="tiers">' + P.rules.tiers.map(t => {
+      const label = t.to === null ? `${from}+` : `${from}–${t.to}`;
+      from = (t.to || 0) + 1;
+      return `<span class="tier${t.rate === rate ? ' is-on' : ''}"><b>${pct(t.rate)}</b><small>${label} ventas</small></span>`;
+    }).join('') + '</div>';
+  }
+
+  /* Desglose: de qué venta o gasto viene cada euro */
+  function payLinesHTML(d, canDelete) {
+    const rows = [];
+    d.commissions.forEach(l => {
+      const pack = l.pack ? ` + pack de ${l.pack} meses (se abonan ${l.packCredit}: ${money2(l.packBase)})` : '';
+      rows.push(`<tr class="row"><td class="c-main"><strong>${esc(l.business)}</strong>
+        <small class="muted">Comisión de venta · ${fmtDay(l.day)}${l.open ? ' · ciclo en curso' : ''}</small></td>
+        <td data-label="Base">${money2(l.base)}<small class="muted">${money2(l.value)}${esc(pack)}</small></td>
+        <td data-label="Tramo">${plural(l.n, 'venta', 'ventas')} → ${pct(l.rate)}</td>
+        <td data-label="Importe"><strong>${money2(l.amount)}</strong></td></tr>`);
+    });
+    d.expenses.forEach(l => {
+      const c = catOf(l.cat);
+      rows.push(`<tr class="row"><td class="c-main"><strong>${esc(l.concept)}</strong>
+        <small class="muted">Gasto aprobado · ${c.icon} ${esc(c.label)} · ${fmtDay(l.day)}</small></td>
+        <td data-label="Base">—</td><td data-label="Tramo">—</td>
+        <td data-label="Importe"><strong>${money2(l.amount)}</strong></td></tr>`);
+    });
+    d.adjustments.forEach(l => {
+      rows.push(`<tr class="row"><td class="c-main"><strong>${esc(l.concept)}</strong>
+        <small class="muted">Ajuste de administración · ${fmtDay(l.day)}${canDelete ? ` · <a href="#" data-deladj="${esc(l.id)}">quitar</a>` : ''}</small></td>
+        <td data-label="Base">—</td><td data-label="Tramo">—</td>
+        <td data-label="Importe"><strong class="${l.amount < 0 ? 'neg' : ''}">${money2(l.amount)}</strong></td></tr>`);
+    });
+    if (!rows.length) return '<p class="empty">Todavía no hay nada acumulado.</p>';
+    return `<table class="tbl ptbl"><thead><tr><th>Concepto</th><th>Base</th><th>Tramo</th><th>Importe</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+  }
+  const countLines = p => p.commissions.length + p.expenses.length + p.adjustments.length;
+
+  function personCard(P, p, admin) {
+    const total = Math.round((p.due + p.accrued) * 100) / 100;
+    const split = `Liquidable hoy <strong>${money2(p.due)}</strong>${p.accrued ? ` · Comisiones del ciclo en curso <strong>${money2(p.accrued)}</strong> <span class="muted">(el % puede subir si cierra más ventas)</span>` : ''}`;
+    const nextTxt = p.next ? `${admin ? 'Le' : 'Te'} ${p.next.need === 1 ? 'falta' : 'faltan'} ${plural(p.next.need, 'venta', 'ventas')} para el ${pct(p.next.rate)}` : 'Tramo máximo alcanzado 🎉';
+    return `<article class="card pay-person">
+      <div class="pay-person__head">
+        <div><h3>${admin ? esc(p.name) : 'Mi ciclo actual'}</h3>
+          <p class="muted">${plural(p.salesCycle, 'venta', 'ventas')} este ciclo · ${nextTxt}</p></div>
+        <div class="pay-total"><span>${admin ? 'Se le debe' : 'Te pagaremos el ' + fmtDayL(P.cycle.end)}</span><strong>${money2(total)}</strong></div>
+      </div>
+      ${tiersHTML(P, p.rate)}
+      <p class="pay-split">${split}</p>
+      ${admin ? `<div class="pay-actions">
+        <button class="btn btn--ghost btn--sm" type="button" data-adj="${esc(p.id)}">➕ Ajuste o bono</button>
+        <button class="btn btn--primary btn--sm" type="button" data-pay="${esc(p.id)}" ${p.due ? '' : 'disabled'}>✔ Marcar pagado ${p.due ? money2(p.due) : ''}</button>
+      </div>` : ''}
+      <details data-pid="${esc(p.id)}" ${state.payOpen.has(p.id) ? 'open' : ''}>
+        <summary>Ver desglose (${plural(countLines(p), 'concepto', 'conceptos')})</summary>
+        ${payLinesHTML(p, admin)}
+      </details>
+    </article>`;
+  }
+
+  function adminSummary(P) {
+    const days = Math.round((parseDay(P.cycle.end) - parseDay(P.today)) / 864e5);
+    const pend = P.expenses.filter(e => e.status === 'pendiente').length;
+    const k = [
+      [`Total a pagar el ${fmtDayL(P.cycle.end)}`, money2(P.totals.due + P.totals.accrued), ''],
+      ['Liquidable hoy', money2(P.totals.due), ''],
+      ['Gastos por aprobar', pend, pend ? 'kpi--alert' : ''],
+      [days === 0 ? '¡Hoy es día de pago!' : 'Días para el pago', days === 0 ? '28' : days, days === 0 ? 'kpi--ok' : '']
+    ];
+    const kpis = '<div class="kpis kpis--4">' + k.map(([a, b, c]) => `<div class="kpi ${c}"><span>${esc(a)}</span><strong>${esc(b)}</strong></div>`).join('') + '</div>';
+    const note = `<p class="muted pay-note">Ciclo de ${fmtDay(P.cycle.start)} a ${fmtDay(P.cycle.end)}. El día ${P.rules.payDay} se paga y el siguiente día vuelven todos al tramo del ${pct(P.rules.tiers[0].rate)}. Las comisiones del ciclo en curso se pueden marcar como pagadas a partir del día ${P.rules.payDay}.</p>`;
+    return kpis + note + (P.people.length ? P.people.map(p => personCard(P, p, true)).join('') : '<p class="empty">Aún no hay comerciales. Créalos en la pestaña Equipo.</p>');
+  }
+
+  function myIncome(P) {
+    const p = P.people[0];
+    if (!p) return '<p class="empty">No hay datos todavía.</p>';
+    const rules = `<article class="card"><h3>Cómo se calcula tu comisión</h3>
+      <p class="muted">Según las ventas que cierres en el ciclo (del ${fmtDay(P.cycle.start)} al ${fmtDay(P.cycle.end)}). El día ${P.rules.payDay} se cobra y el siguiente empieza de nuevo en el ${pct(P.rules.tiers[0].rate)}.</p>
+      ${tiersHTML(P, p.rate)}
+      <p class="muted">Packs de mantenimiento: 3 meses → se abona 1 mes · 6 meses → 2 meses · 12 meses → 3 meses (parte proporcional).</p></article>`;
+    return personCard(P, p, false) + rules;
+  }
+
+  function expCard(e, admin) {
+    const c = catOf(e.cat), st = EXP_ST[e.status];
+    const act = [`<button class="btn btn--ghost btn--sm" type="button" data-file="${esc(e.id)}">📎 Justificante</button>`];
+    if (admin && !e.payoutId) act.push(e.status === 'pendiente'
+      ? `<button class="btn btn--primary btn--sm" type="button" data-review="${esc(e.id)}">Revisar</button>`
+      : `<button class="btn btn--ghost btn--sm" type="button" data-reopen="${esc(e.id)}">Reabrir</button>`);
+    if (!admin && e.status === 'pendiente') act.push(`<button class="btn btn--danger-ghost btn--sm" type="button" data-retire="${esc(e.id)}">Retirar</button>`);
+    return `<article class="card exp">
+      <div class="exp__top"><span>${c.icon} ${esc(c.label)}</span><span class="pill ${st[1]}">${e.payoutId ? 'Pagado' : st[0]}</span></div>
+      <h4>${esc(e.concept)}</h4>
+      <p class="muted">${admin ? esc(e.ownerName) + ' · ' : ''}${fmtDay(e.date)} · <strong>${money2(e.amount)}</strong>${e.status === 'aprobado' && e.approvedAmount !== e.amount ? ` (aprobado ${money2(e.approvedAmount)})` : ''}</p>
+      ${e.note ? `<p>${esc(e.note)}</p>` : ''}
+      ${e.adminNote ? `<p class="exp__msg">💬 ${esc(e.adminNote)}</p>` : ''}
+      <div class="exp__act">${act.join('')}</div></article>`;
+  }
+
+  function adminExpenses(P) {
+    const pend = P.expenses.filter(e => e.status === 'pendiente'), rest = P.expenses.filter(e => e.status !== 'pendiente');
+    return `<h3 class="sub">Por aprobar (${pend.length})</h3>` +
+      (pend.length ? pend.map(e => expCard(e, true)).join('') : '<p class="empty">No hay gastos pendientes. 🎉</p>') +
+      (rest.length ? `<h3 class="sub">Ya revisados</h3>` + rest.map(e => expCard(e, true)).join('') : '');
+  }
+
+  function myExpenses(P) {
+    const p = P.people[0];
+    const tiles = p ? p.cats.map(c => `<div class="cat${c.eligible ? '' : ' is-locked'}"><span class="cat__i">${c.eligible ? c.icon : '🔒'}</span>
+      <strong>${esc(c.label)}</strong>
+      <small class="muted">${c.eligible ? `${money2(c.used)} de ${c.cap} € este ciclo` : c.mode === 'off' ? 'Desactivado por administración' : `Desde ${plural(c.minSales, 'venta', 'ventas')}`}</small></div>`).join('') : '';
+    return `<div class="pay-bar"><p class="muted">Los gastos necesitan justificante y los aprueba administración. Los aprobados se suman a tu pago del ${fmtDayL(P.cycle.end)}.</p>
+        <button class="btn btn--primary" type="button" data-addexp>➕ Añadir gasto</button></div>
+      <div class="cats">${tiles}</div>
+      <h3 class="sub">Mis gastos</h3>` +
+      (P.expenses.length ? P.expenses.map(e => expCard(e, false)).join('') : '<p class="empty">Aún no has registrado gastos.</p>');
+  }
+
+  function historyView(P) {
+    if (!P.payouts.length) return '<p class="empty">Todavía no hay pagos registrados.</p>';
+    return P.payouts.map(po => {
+      const d = { commissions: po.lines.filter(l => l.kind === 'comision'), expenses: po.lines.filter(l => l.kind === 'gasto'), adjustments: po.lines.filter(l => l.kind === 'ajuste') };
+      return `<article class="card"><details>
+        <summary class="po-sum"><span><strong>${esc(fmtDayL(po.day))}</strong>${isAdmin() ? ' · ' + esc(po.ownerName) : ''}</span><strong>${money2(po.total)}</strong></summary>
+        ${po.note ? `<p class="muted">${esc(po.note)}</p>` : ''}${payLinesHTML(d, false)}</details></article>`;
+    }).join('');
+  }
+
+  function benefitsView(P) {
+    if (!P.people.length) return '<p class="empty">Aún no hay comerciales. Créalos en la pestaña Equipo.</p>';
+    const opt = (v, cur, l) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`;
+    return '<p class="muted pay-note">Activa o desactiva cada beneficio por comercial. «Auto» lo desbloquea según su rendimiento (ventas); «Activado» lo habilita siempre y «Desactivado» lo bloquea aunque tenga ventas.</p>' +
+      P.people.map(p => `<article class="card"><div class="ben-head"><h3>${esc(p.name)}</h3>
+        <div class="ben-all"><button class="btn btn--ghost btn--sm" type="button" data-benall="${esc(p.id)}|on">Activar todos</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-benall="${esc(p.id)}|off">Desactivar todos</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-benall="${esc(p.id)}|auto">Todos en auto</button></div></div>
+        ${p.cats.map(c => `<div class="ben"><div><strong>${c.icon} ${esc(c.label)}</strong>
+          <small class="muted">Tope ${c.cap} € por ciclo · auto desde ${plural(c.minSales, 'venta', 'ventas')} · <b class="${c.eligible ? 'ben--on' : 'ben--off'}">${c.eligible ? 'Disponible' : 'Bloqueado'}</b></small></div>
+          <select data-ben="${esc(p.id)}|${c.id}" aria-label="${esc(c.label)} para ${esc(p.name)}">${opt('auto', c.mode, 'Auto')}${opt('on', c.mode, 'Activado')}${opt('off', c.mode, 'Desactivado')}</select></div>`).join('')}
+      </article>`).join('');
+  }
+
+  function renderPay(noLoad) {
+    const out = $('#payOut'), P = state.pay, admin = isAdmin();
+    if (!P) { out.innerHTML = '<p class="empty">Cargando…</p>'; if (!noLoad) loadPay(true); return; }
+    if (!noLoad && Date.now() - state.payAt > 20000) loadPay(true);
+    const pend = P.expenses.filter(e => e.status === 'pendiente').length;
+    const tabs = admin
+      ? [['resumen', 'Resumen'], ['gastos', 'Gastos' + (pend ? ` <span class="tab-badge">${pend}</span>` : '')], ['beneficios', 'Beneficios'], ['historial', 'Historial']]
+      : [['resumen', 'Mis ingresos'], ['gastos', 'Mis gastos'], ['historial', 'Historial']];
+    if (!tabs.some(t => t[0] === state.payTab)) state.payTab = 'resumen';
+    $('#paySeg').innerHTML = tabs.map(([id, l]) => `<button type="button" data-paytab="${id}" aria-pressed="${state.payTab === id}">${l}</button>`).join('');
+    $('#paySub').textContent = `Ciclo del ${fmtDay(P.cycle.start)} al ${fmtDay(P.cycle.end)} · pago el ${fmtDayL(P.cycle.end)}`;
+    out.innerHTML = state.payTab === 'resumen' ? (admin ? adminSummary(P) : myIncome(P))
+      : state.payTab === 'gastos' ? (admin ? adminExpenses(P) : myExpenses(P))
+      : state.payTab === 'beneficios' ? benefitsView(P)
+      : historyView(P);
+  }
+
+  /* ---------- acciones ---------- */
+  async function payAct(fn, okMsg) {
+    try { await fn(); toast(okMsg); await loadPay(true); } catch (e) { fail(e); }
+  }
+  async function openFile(id) {
+    const w = window.open('', '_blank');
+    try {
+      const r = await fetch(`/api/expenses/${encodeURIComponent(id)}/file`, { headers: { Authorization: 'Bearer ' + state.token } });
+      if (!r.ok) throw new Error('No se pudo abrir el justificante.');
+      const url = URL.createObjectURL(await r.blob());
+      if (w) w.location = url; else { const a = document.createElement('a'); a.href = url; a.download = 'justificante'; a.click(); }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { if (w) w.close(); toast(e.message); }
+  }
+
+  /* Diálogo: nuevo gasto (comercial) */
+  const edlg = () => $('#expDialog');
+  function openExp() {
+    const p = state.pay.people[0];
+    $('#xCat').innerHTML = p.cats.map(c => `<option value="${c.id}" ${c.eligible ? '' : 'disabled'}>${c.eligible ? c.icon + ' ' + esc(c.label) : '🔒 ' + esc(c.label) + (c.mode === 'off' ? ' (desactivado)' : ' (desde ' + plural(c.minSales, 'venta', 'ventas') + ')')}</option>`).join('');
+    const first = p.cats.find(c => c.eligible);
+    if (!first) { toast('Aún no tienes tipos de gasto desbloqueados. Se desbloquean al cerrar tu primera venta.'); return; }
+    $('#xCat').value = first.id;
+    $('#xConcept').value = ''; $('#xAmount').value = ''; $('#xNote').value = ''; $('#xFile').value = '';
+    $('#xDate').value = state.pay.today; $('#xDate').max = state.pay.today;
+    const d = new Date(parseDay(state.pay.today)); d.setDate(d.getDate() - 62);
+    $('#xDate').min = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    $('#expError').hidden = true; capHint();
+    edlg().showModal();
+  }
+  function capHint() {
+    const c = state.pay.people[0].cats.find(x => x.id === $('#xCat').value);
+    $('#xCapHint').textContent = c ? `Tope: ${c.cap} € por ciclo · llevas ${money2(c.used)} entre aprobados y pendientes.` : '';
+  }
+  const blobB64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
+  async function filePayload(file) {
+    if (file.type === 'application/pdf') {
+      if (file.size > 2e6) throw new Error('El PDF pesa más de 2 MB. Haz una foto del ticket en su lugar.');
+      return { name: file.name, type: file.type, data: await blobB64(file) };
+    }
+    if (!/^image\//.test(file.type)) throw new Error('Formato no válido: sube una foto (JPG o PNG) o un PDF.');
+    let bmp;
+    try { bmp = await createImageBitmap(file); } catch { throw new Error('No se pudo leer la imagen. Prueba con otra foto o un PDF.'); }
+    const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
+    cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+    const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.8));
+    return { name: (file.name || 'justificante').replace(/\.\w+$/, '') + '.jpg', type: 'image/jpeg', data: await blobB64(blob) };
+  }
+  async function saveExp(e) {
+    e.preventDefault();
+    const err = $('#expError'), btn = $('#expForm button[type=submit]');
+    const show = m => { err.textContent = m; err.hidden = false; };
+    const f = $('#xFile').files[0];
+    if (!f) return show('Adjunta el justificante (foto o PDF del ticket o factura).');
+    btn.disabled = true;
+    try {
+      const file = await filePayload(f);
+      await api('POST', 'expenses', {
+        cat: $('#xCat').value, concept: $('#xConcept').value.trim(), amount: Number($('#xAmount').value),
+        date: $('#xDate').value, note: $('#xNote').value.trim(), file
+      });
+      edlg().close(); toast('Gasto enviado. Administración lo revisará.'); await loadPay(true);
+    } catch (x) { show(x.message || 'No se pudo enviar el gasto.'); }
+    btn.disabled = false;
+  }
+
+  /* Diálogo: aprobar o rechazar (admin) */
+  const ddlg = () => $('#decDialog');
+  function openDec(id) {
+    const x = state.pay.expenses.find(e => e.id === id); if (!x) return;
+    state.decId = id;
+    const c = catOf(x.cat);
+    $('#decInfo').innerHTML = `<strong>${esc(x.ownerName)}</strong> · ${c.icon} ${esc(c.label)}<br>${esc(x.concept)}<br><span class="muted">${fmtDay(x.date)} · solicitado ${money2(x.amount)}</span>${x.note ? `<br>${esc(x.note)}` : ''}`;
+    $('#dAmount').value = x.amount; $('#dAmount').max = x.amount; $('#dNote').value = '';
+    $('#decError').hidden = true;
+    ddlg().showModal();
+  }
+  async function decide(decision) {
+    const err = $('#decError');
+    try {
+      await api('PUT', `expenses/${encodeURIComponent(state.decId)}`, { decision, approvedAmount: Number($('#dAmount').value), adminNote: $('#dNote').value.trim() });
+      ddlg().close(); toast(decision === 'aprobado' ? 'Gasto aprobado: se suma a su pago.' : 'Gasto rechazado.'); await loadPay(true);
+    } catch (x) { err.textContent = x.message; err.hidden = false; }
+  }
+
+  /* Diálogo: ajuste o bono (admin) */
+  const adlg = () => $('#adjDialog');
+  function openAdj(owner) {
+    $('#aOwner').innerHTML = state.pay.people.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+    $('#aOwner').value = owner; $('#aConcept').value = ''; $('#aAmount').value = ''; $('#adjError').hidden = true;
+    adlg().showModal();
+  }
+  async function saveAdj(e) {
+    e.preventDefault();
+    const err = $('#adjError');
+    try {
+      await api('POST', 'pay/adjustments', { owner: $('#aOwner').value, concept: $('#aConcept').value.trim(), amount: Number($('#aAmount').value) });
+      adlg().close(); toast('Ajuste añadido a su pago.'); await loadPay(true);
+    } catch (x) { err.textContent = x.message; err.hidden = false; }
+  }
+
+  function bindPay() {
+    $('#paySeg').addEventListener('click', e => {
+      const b = e.target.closest('[data-paytab]'); if (!b) return;
+      state.payTab = b.dataset.paytab; renderPay(true);
+    });
+    const out = $('#payOut');
+    out.addEventListener('toggle', e => {
+      const id = e.target.dataset && e.target.dataset.pid; if (!id) return;
+      if (e.target.open) state.payOpen.add(id); else state.payOpen.delete(id);
+    }, true);
+    out.addEventListener('click', e => {
+      const t = e.target.closest('[data-file],[data-review],[data-reopen],[data-retire],[data-pay],[data-adj],[data-deladj],[data-addexp],[data-benall]');
+      if (!t) return;
+      e.preventDefault();
+      const d = t.dataset;
+      if (d.file) openFile(d.file);
+      else if (d.review) openDec(d.review);
+      else if (d.reopen) payAct(() => api('PUT', `expenses/${encodeURIComponent(d.reopen)}`, { decision: 'pendiente' }), 'Gasto reabierto');
+      else if (d.retire) { if (confirm('¿Retirar este gasto?')) payAct(() => api('DELETE', `expenses/${encodeURIComponent(d.retire)}`), 'Gasto retirado'); }
+      else if (d.benall) {
+        const [owner, mode] = d.benall.split('|');
+        payAct(() => api('PUT', 'pay/benefits', { owner, cat: '*', mode }), 'Beneficios actualizados');
+      }
+      else if (d.adj) openAdj(d.adj);
+      else if (d.deladj) { if (confirm('¿Quitar este ajuste?')) payAct(() => api('DELETE', `pay/adjustments/${encodeURIComponent(d.deladj)}`), 'Ajuste eliminado'); }
+      else if (d.addexp !== undefined) openExp();
+      else if (d.pay) {
+        const p = state.pay.people.find(x => x.id === d.pay); if (!p || !p.due) return;
+        if (confirm(`¿Marcar como pagados ${money2(p.due)} a ${p.name}?\nSe guardará el desglose en el historial.`))
+          payAct(() => api('POST', 'pay/payouts', { owner: d.pay }), 'Pago registrado');
+      }
+    });
+    out.addEventListener('change', e => {
+      const t = e.target.closest('[data-ben]'); if (!t) return;
+      const [owner, cat] = t.dataset.ben.split('|');
+      payAct(() => api('PUT', 'pay/benefits', { owner, cat, mode: t.value }), 'Beneficio actualizado');
+    });
+    $('#expForm').addEventListener('submit', saveExp);
+    $('#xCat').addEventListener('change', capHint);
+    $('#expClose').addEventListener('click', () => edlg().close());
+    $('#expCancel').addEventListener('click', () => edlg().close());
+    $('#decClose').addEventListener('click', () => ddlg().close());
+    $('#decApprove').addEventListener('click', () => decide('aprobado'));
+    $('#decReject').addEventListener('click', () => decide('rechazado'));
+    $('#adjForm').addEventListener('submit', saveAdj);
+    $('#adjClose').addEventListener('click', () => adlg().close());
+    $('#adjCancel').addEventListener('click', () => adlg().close());
+  }
+
+  /* ============================================================
      EVENTOS
      ============================================================ */
   function bind() {
@@ -1573,6 +1919,8 @@
     $('#logInput').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addNote(); } });
     dlg().addEventListener('click', e => { if (e.target === dlg()) closeDialog(); });
     dlg().addEventListener('close', () => { state.editingId = null; });
+
+    bindPay();
 
     // Al volver a la pestaña, traer lo último
     document.addEventListener('visibilitychange', () => {

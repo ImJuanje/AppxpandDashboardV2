@@ -281,7 +281,7 @@ dialog {
   background: var(--surface); color: var(--ink);
 }
 dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px); }
-#clientForm, #newsForm, #kbForm { display: flex; flex-direction: column; height: 100%; }
+#clientForm, #newsForm, #kbForm, #expForm, #decForm, #adjForm { display: flex; flex-direction: column; height: 100%; }
 .check.pin { align-self: end; margin: 0 0 11px; }
 .dlg-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 16px 16px 12px; border-bottom: 1px solid var(--line); }
 .dlg-head h3 { font-size: 1.2rem; }
@@ -490,7 +490,7 @@ dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px)
   .board { scroll-snap-type: none; }
 
   dialog { width: min(720px, calc(100% - 48px)); height: auto; max-height: calc(100dvh - 48px); margin: auto; border-radius: 20px; box-shadow: var(--shadow-lg); overflow: hidden; }
-  #clientForm, #newsForm, #kbForm { height: auto; max-height: calc(100dvh - 48px); }
+  #clientForm, #newsForm, #kbForm, #expForm, #decForm, #adjForm { height: auto; max-height: calc(100dvh - 48px); }
   .form-grid { grid-template-columns: 1fr 1fr; }
   .form-grid .span2 { grid-column: 1 / -1; }
 }
@@ -610,3 +610,49 @@ dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px)
 [data-theme="dark"] dialog::backdrop { background: rgba(2, 6, 16, .7); }
 [data-theme="dark"] .tbl th, [data-theme="dark"] .team th { background: #0f1930; }
 [data-theme="dark"] .tbl tr.row:hover { background: #17233f; }
+
+/* ---------- Pagos y gastos ---------- */
+.kpis--4 { grid-template-columns: repeat(2, 1fr); }
+@media (min-width: 900px) { .kpis--4 { grid-template-columns: repeat(4, 1fr); } }
+.pill--green { background: var(--ok-bg); color: var(--ok); }
+.pay-note { margin: 0 0 14px; font-size: .88rem; }
+.pay-person__head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 16px; align-items: flex-start; margin-bottom: 12px; }
+.pay-person__head h3 { margin-bottom: 2px; }
+.pay-total { text-align: right; }
+.pay-total span { display: block; font-size: .78rem; font-weight: 600; color: var(--muted); }
+.pay-total strong { font-size: 1.7rem; letter-spacing: -.02em; color: var(--primary); }
+.tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 0 0 12px; }
+.tier { display: grid; text-align: center; border: 1px solid var(--line); border-radius: 10px; padding: 7px 4px; color: var(--muted); }
+.tier b { font-size: .95rem; }
+.tier small { font-size: .68rem; }
+.tier.is-on { background: var(--primary-soft); border-color: var(--primary); color: var(--primary); }
+.pay-split { font-size: .9rem; margin: 0 0 12px; }
+.pay-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.pay-person details > summary, .po-sum { cursor: pointer; font-weight: 600; font-size: .92rem; padding: 6px 0; }
+.po-sum { display: flex; justify-content: space-between; gap: 10px; list-style: none; }
+.pay-person details[open] > summary { margin-bottom: 10px; }
+.ptbl tr.row { cursor: default; }
+.ptbl tr.row:hover { background: none; }
+.neg { color: var(--bad); }
+.sub { font-size: 1rem; margin: 20px 0 10px; }
+.pay-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.pay-bar p { margin: 0; flex: 1 1 260px; }
+.cats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 6px; }
+.cat { display: grid; gap: 2px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px; }
+.cat.is-locked { opacity: .55; }
+.cat__i { font-size: 1.3rem; }
+.cat strong { font-size: .88rem; line-height: 1.25; }
+.exp h4 { font-size: 1rem; margin: 6px 0 4px; }
+.exp p { margin: 0 0 6px; }
+.exp__top { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .88rem; font-weight: 600; }
+.exp__msg { font-size: .88rem; background: var(--warn-bg); color: var(--warn); border-radius: var(--radius-sm); padding: 8px 10px; }
+.exp__act { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+@media (max-width: 639px) { .pay-total { text-align: left; } }
+.ben-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ben-head h3 { margin: 0; }
+.ben-all { display: flex; flex-wrap: wrap; gap: 6px; }
+.ben { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.ben small { display: block; margin-top: 2px; }
+.ben select { width: auto; min-width: 128px; margin: 0; flex: none; }
+.ben--on { color: var(--ok); }
+.ben--off { color: var(--bad); }
