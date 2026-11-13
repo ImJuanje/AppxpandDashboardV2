@@ -8,7 +8,7 @@
                                    deriva de ADMIN_CODE.
    ============================================================ */
 import { getStore } from '@netlify/blobs';
-import { createHash, createHmac, timingSafeEqual, randomInt, randomUUID } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual, randomInt, randomUUID, randomBytes, scryptSync } from 'node:crypto';
 import { KB_SEED, KB_PATCHES } from './kb-seed.mjs';
 
 export const config = { path: '/api/*' };
@@ -123,20 +123,74 @@ async function createUser(db, name, role) {
   return { user: pub(user), code };
 }
 
+/* ---------- contraseña opcional de los comerciales ---------- */
+const PW_MIN = 8, PW_MAX = 72;
+const hashPw = pw => { const salt = randomBytes(16); return { salt: salt.toString('hex'), hash: scryptSync(pw, salt, 32).toString('hex') }; };
+function verifyPw(pw, rec) {
+  const got = scryptSync(String(pw), Buffer.from(rec.salt, 'hex'), 32);
+  const want = Buffer.from(rec.hash, 'hex');
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+const DUMMY_SALT = Buffer.alloc(16);
+/* usuario escrito en el login: su id (p. ej. «lucia2») o su nombre. Solo cuentas «comercial» */
+async function findByLogin(db, ident) {
+  const raw = ident.toLowerCase();
+  const list = (await listUsers(db)).filter(u => u.role === 'comercial');
+  const byId = list.find(u => u.id === raw);
+  const byName = list.filter(u => slug(ident) === slug(u.name));
+  const hit = byId || (byName.length === 1 ? byName[0] : null);
+  return hit ? await db.get('u/' + hit.id, { type: 'json' }) : null;
+}
+async function failAttempt(db, key, lock) {
+  const n = (lock.n || 0) + 1;
+  await db.setJSON('rl/' + key, n >= 5 ? { n: 0, until: Date.now() + 60e3 } : { n, t: Date.now() });
+}
+async function setPassword(req, user, db) {
+  if (user.role !== 'comercial') throw new HttpError(403, 'Esta cuenta solo accede con su código.');
+  const b = await readBody(req);
+  const pw = String(b.password ?? '');
+  if (pw.length < PW_MIN) throw new HttpError(400, `La contraseña debe tener al menos ${PW_MIN} caracteres.`);
+  if (pw.length > PW_MAX) throw new HttpError(400, `La contraseña no puede pasar de ${PW_MAX} caracteres.`);
+  const u = await db.get('u/' + user.id, { type: 'json' });
+  if (!u) throw new HttpError(404, 'Usuario no encontrado.');
+  if (u.pw) {
+    const key = 'pw-' + user.id;
+    const lock = await lockState(db, key);
+    if (!verifyPw(String(b.current ?? ''), u.pw)) {
+      await failAttempt(db, key, lock);
+      throw new HttpError(403, 'La contraseña actual no es correcta.');
+    }
+    await db.delete('rl/' + key);
+  }
+  u.pw = hashPw(pw);
+  await db.setJSON('u/' + u.id, u);
+  return json({ ok: true, hasPassword: true });
+}
+
 async function resetUser(db, id) {
   const u = await db.get('u/' + id, { type: 'json' });
   if (!u) throw new HttpError(404, 'Usuario no encontrado.');
   const { code, h } = await freshCode(db);
   await db.delete('h/' + u.codeHash);
   u.codeHash = h;
+  delete u.pw; // un código nuevo = acceso reiniciado: también se quita su contraseña
   await db.setJSON('u/' + id, u);
   await db.setJSON('h/' + h, { id });
   return { user: pub(u), code };
 }
 
-async function deleteUser(db, id) {
+async function deleteUser(db, id, assign = {}) {
   const u = await db.get('u/' + id, { type: 'json' });
   if (!u) throw new HttpError(404, 'Usuario no encontrado.');
+  // destinos elegidos por el admin para cada cliente (lo que no esté indicado o no sea válido pasa a administración)
+  const targets = new Map();
+  for (const to of new Set(Object.values(assign || {}).map(v => str(v, 40)))) {
+    if (to === 'admin') targets.set(to, ADMIN.name);
+    else if (to && to !== id && isId(to)) {
+      const t = await db.get('u/' + to, { type: 'json' });
+      if (t) targets.set(to, t.name);
+    }
+  }
   await db.delete('u/' + id);
   await db.delete('h/' + u.codeHash);
   await db.delete('idx/users');
@@ -144,18 +198,58 @@ async function deleteUser(db, id) {
   await db.delete('ben/' + id);
   await db.delete('tp/' + id);
   await db.delete('pf/' + id);
+  const { blobs: vv } = await db.list({ prefix: 'vis/' + id + '/' });
+  await Promise.all(vv.map(b => db.delete(b.key)));
   // su conversación privada con administración desaparece con él
   const { blobs: dm } = await db.list({ prefix: chanPrefix('dm.' + id) });
   await Promise.all(dm.map(b => db.delete(b.key)));
-  // sus clientes pasan al administrador
+  // sus clientes pasan a quien haya elegido el admin (por defecto, a administración)
   const t = now();
   const clients = await allClients(db);
-  await Promise.all(clients.filter(c => c.owner === id).map(c => {
-    c.owner = 'admin';
+  const mine = clients.filter(c => c.owner === id);
+  await Promise.all(mine.map(c => {
+    const want = str(assign?.[c.id], 40);
+    const to = targets.has(want) ? want : 'admin';
+    c.owner = to;
     c.updatedAt = t;
-    c.log = [...(c.log || []), { t, by: 'admin', type: 'estado', text: `Reasignado a ${ADMIN.name} (baja de ${u.name})` }].slice(-200);
+    c.log = [...(c.log || []), { t, by: 'admin', type: 'estado', text: `Reasignado a ${to === 'admin' ? ADMIN.name : targets.get(to)} (baja de ${u.name})` }].slice(-200);
     return db.setJSON('c/' + c.id, c);
   }));
+  return { moved: mine.length };
+}
+
+/* ---------- registro de accesos (solo lo ve la administración) ---------- */
+const VISIT_GAP = 30 * 60e3;   // dos entradas se cuentan por separado si pasan más de 30 min
+const VISIT_KEEP_DAYS = 60;
+async function recordVisit(db, user) {
+  if (user.id === 'admin') return { ok: true };
+  const t = now(), key = `vis/${user.id}/${dayOf(t)}`;
+  const cur = (await db.get(key, { type: 'json' })) || { n: 0, last: '', times: [] };
+  if (!cur.last || Date.parse(t) - Date.parse(cur.last) > VISIT_GAP) {
+    cur.n += 1;
+    cur.times = [...(cur.times || []), t].slice(-40);
+  }
+  cur.last = t;
+  await db.setJSON(key, cur);
+  return { ok: true };
+}
+async function visitsReport(db, daysBack) {
+  const n = Math.min(30, Math.max(1, Number(daysBack) || 7));
+  const today = dayOf(now());
+  const days = Array.from({ length: n }, (_, i) => dayAdd(today, i - n + 1));
+  const cutoffKeep = dayAdd(today, -VISIT_KEEP_DAYS);
+  const { blobs } = await db.list({ prefix: 'vis/' });
+  const rows = {}, old = [];
+  await Promise.all(blobs.map(async b => {
+    const [, uid, day] = b.key.split('/');
+    if (!uid || !day) return;
+    if (day < cutoffKeep) { old.push(b.key); return; }
+    if (day < days[0]) return;
+    const rec = await db.get(b.key, { type: 'json' });
+    if (rec) (rows[uid] ||= {})[day] = { n: rec.n || 0, last: rec.last || '', times: rec.times || [] };
+  }));
+  await Promise.all(old.map(k => db.delete(k)));
+  return { today, days, rows };
 }
 
 /* ---------- login ---------- */
@@ -166,30 +260,48 @@ async function lockState(db, ip) {
 }
 
 async function login(req, ctx, db) {
-  const { code, remember } = await readBody(req);
-  const c = str(code, 64).toUpperCase();
-  if (!c) throw new HttpError(400, 'Introduce tu código de alta.');
+  const b = await readBody(req);
+  const remember = b.remember;
+  const byPass = typeof b.user === 'string' && b.user.trim() !== '';
   const ip = String(ctx?.ip || 'unknown').replace(/[^\w.:-]/g, '_').slice(0, 60);
+
+  let c = '';
+  if (byPass) {
+    if (!String(b.password ?? '')) throw new HttpError(400, 'Introduce tu contraseña.');
+  } else {
+    c = str(b.code, 64).toUpperCase();
+    if (!c) throw new HttpError(400, 'Introduce tu código de alta.');
+  }
   const lock = await lockState(db, ip);
 
-  let user = null;
-  if (safeEq(sha(c), sha(adminCode()))) user = ADMIN;
-  else {
+  let user = null, v = '';
+  if (byPass) {
+    const pw = String(b.password).slice(0, 200);
+    const rec = await findByLogin(db, str(b.user, 60));
+    if (rec && rec.pw) {
+      if (verifyPw(pw, rec.pw)) { user = pub(rec); v = rec.codeHash.slice(0, 8); }
+    } else scryptSync(pw, DUMMY_SALT, 32); // mismo coste si el usuario no existe o no tiene contraseña
+  } else if (safeEq(sha(c), sha(adminCode()))) {
+    user = ADMIN; v = sha(adminCode()).slice(0, 8);
+  } else {
     const ref = await db.get('h/' + sha(c), { type: 'json' });
     const u = ref && (await db.get('u/' + ref.id, { type: 'json' }));
-    if (u) user = pub(u);
+    if (u) { user = pub(u); v = sha(c).slice(0, 8); }
   }
 
   if (!user) {
-    const n = (lock.n || 0) + 1;
-    await db.setJSON('rl/' + ip, n >= 5 ? { n: 0, until: Date.now() + 60e3 } : { n, t: Date.now() });
-    throw new HttpError(401, 'Código no válido. Revísalo o pídeselo al administrador.');
+    await failAttempt(db, ip, lock);
+    throw new HttpError(401, byPass ? 'Usuario o contraseña incorrectos.' : 'Código no válido. Revísalo o pídeselo al administrador.');
   }
   await db.delete('rl/' + ip);
   const exp = Date.now() + (remember ? 14 * 24 * HOUR : 12 * HOUR);
   // «v» ata la sesión al código vigente: si se genera uno nuevo, las sesiones antiguas dejan de valer
-  const v = user.id === 'admin' ? sha(adminCode()).slice(0, 8) : sha(c).slice(0, 8);
-  return json({ token: sign({ id: user.id, exp, v }), exp, user });
+  return json({ token: sign({ id: user.id, exp, v }), exp, user: await withPwFlag(db, user) });
+}
+async function withPwFlag(db, user) {
+  if (user.role !== 'comercial') return user;
+  const u = await db.get('u/' + user.id, { type: 'json' });
+  return { ...user, hasPassword: !!(u && u.pw) };
 }
 
 async function authenticate(req, db) {
@@ -202,7 +314,7 @@ async function authenticate(req, db) {
   }
   const u = await db.get('u/' + p.id, { type: 'json' });
   if (!u || p.v !== u.codeHash.slice(0, 8)) throw new HttpError(401, 'Tu acceso ya no está activo. Vuelve a entrar.');
-  return pub(u);
+  return u.role === 'comercial' ? { ...pub(u), hasPassword: !!u.pw } : pub(u);
 }
 const isAdmin = u => u.role === 'admin';
 
@@ -1071,6 +1183,10 @@ export default async (req, ctx) => {
       });
     }
 
+    if (res === 'visit' && !id && m === 'POST') return json(await recordVisit(db, user));
+    if (res === 'visits' && !id && m === 'GET') { needAdmin(); return json(await visitsReport(db, new URL(req.url).searchParams.get('days'))); }
+    if (res === 'password' && !id && m === 'PUT') return await setPassword(req, user, db);
+
     if (res === 'profile' && !id) {
       if (m === 'GET') return json(await getPf(db, user.id));
       if (m === 'PUT') return await saveProfile(req, user, db);
@@ -1169,7 +1285,11 @@ export default async (req, ctx) => {
       }
       if (id && !isId(id)) throw new HttpError(404, 'Usuario no encontrado.');
       if (id && sub === 'reset' && m === 'POST') return json(await resetUser(db, id));
-      if (id && !sub && m === 'DELETE') { await deleteUser(db, id); return json({ ok: true }); }
+      if (id && !sub && m === 'DELETE') {
+        let assign = {};
+        try { const b = await req.json(); if (b && typeof b.assign === 'object' && b.assign) assign = b.assign; } catch { /* sin cuerpo: todo a administración */ }
+        return json({ ok: true, ...(await deleteUser(db, id, assign)) });
+      }
     }
 
     throw new HttpError(404, 'Ruta no encontrada.');
