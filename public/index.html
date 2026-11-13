@@ -283,9 +283,9 @@
       <div class="grid2">
         <article class="card">
           <h3>Generador de códigos de alta</h3>
-          <p class="muted">Crea el acceso de un nuevo comercial: se le asigna un código y ya puede entrar. Sin tocar ningún archivo.</p>
+          <p class="muted">Crea el acceso de un comercial o de otro administrador: se le asigna un código y ya puede entrar. Puedes generar un código nuevo o darlo de baja desde la tabla de arriba.</p>
           <form id="genForm" class="gen">
-            <label>Nombre del comercial<input id="genName" type="text" maxlength="40" placeholder="Ej. Lucía" required></label>
+            <label>Nombre<input id="genName" type="text" maxlength="40" placeholder="Ej. Lucía" required></label>
             <label>Rol
               <select id="genRole"><option value="comercial">Comercial</option><option value="admin">Administrador</option></select>
             </label>
@@ -608,6 +608,22 @@
       <span class="spacer"></span>
       <button type="button" class="btn btn--ghost" id="pfCancel">Cancelar</button>
       <button type="submit" class="btn btn--primary">Guardar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO DE CONFIRMACIÓN (sustituye a confirm/prompt del navegador) ============ -->
+<dialog id="confirmDialog" aria-labelledby="cfTitle" aria-describedby="cfMsg">
+  <form id="confirmForm" novalidate>
+    <div class="cf-body">
+      <span class="cf-ico" id="cfIco" aria-hidden="true">!</span>
+      <h3 id="cfTitle">¿Seguro?</h3>
+      <p id="cfMsg" class="muted"></p>
+      <label id="cfTypeWrap" hidden><span id="cfTypeLbl"></span><input id="cfType" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+    </div>
+    <footer class="cf-foot">
+      <button type="button" class="btn btn--ghost" id="cfCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary" id="cfOk">Aceptar</button>
     </footer>
   </form>
 </dialog>

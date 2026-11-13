@@ -660,14 +660,12 @@ dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px)
 .ben--on { color: var(--ok); }
 .ben--off { color: var(--bad); }
 
-/* Con tantas pestañas, en pantallas medianas van en una segunda fila (sin solaparse con el perfil);
-   solo en pantallas muy anchas caben todas en la misma línea que el logo y el usuario. */
+/* Barra superior en DOS filas en todos los tamaños: logo + usuario arriba y las pestañas debajo, a todo el ancho.
+   Antes, en pantallas anchas, todo iba en una sola línea y «Mi perfil» empujaba las pestañas
+   (la última, «Equipo», quedaba oculta tras el scroll horizontal). */
 .user { flex: none; }
-@media (min-width: 1280px) {
-  .topbar__in { flex-wrap: nowrap; padding-top: 0; gap: 28px; }
-  .tabs { order: 0; flex: 1 1 auto; min-width: 0; width: auto; margin: 0; padding: 0; align-self: stretch; }
-  .tabs button { padding: 20px 14px 17px; }
-  .user { order: 2; }
+@media (min-width: 900px) {
+  .tabs { overflow-x: visible; flex-wrap: wrap; margin: 0; padding: 0; }
 }
 
 /* ---------- Equipo en la web ---------- */
@@ -709,3 +707,18 @@ dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px)
 .ra-row select { min-width: 170px; }
 .ra-row > div { flex: 1 1 140px; min-width: 0; }
 .ra-row select { width: auto; flex: 0 0 auto; }
+
+
+/* ---------- Diálogo de confirmación (sustituye a los avisos del navegador) ---------- */
+#confirmDialog { width: min(420px, calc(100% - 32px)); height: auto; max-height: calc(100dvh - 32px); margin: auto; border-radius: 20px; box-shadow: var(--shadow-lg); overflow: hidden; }
+#confirmForm { display: block; }
+.cf-body { padding: 26px 24px 8px; text-align: center; }
+.cf-body h3 { font-size: 1.2rem; margin: 10px 0 6px; }
+.cf-body p { margin: 0 0 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.cf-body label { display: block; text-align: left; margin-top: 12px; font-size: .88rem; font-weight: 600; }
+.cf-body label input { margin-top: 6px; }
+.cf-ico { width: 46px; height: 46px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 1.4rem; font-weight: 800; background: var(--primary-soft); color: var(--primary); }
+.cf-ico--bad { background: var(--bad-bg); color: var(--bad); }
+.cf-foot { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; padding: 14px 24px calc(20px + env(safe-area-inset-bottom)); }
+.cf-foot .btn { min-width: 120px; }
+.cf-foot .btn:disabled { opacity: .5; cursor: not-allowed; }

@@ -135,6 +135,52 @@
       if (!quiet && --busy <= 0) { busy = 0; document.body.classList.remove('busy'); }
     }
   }
+  /* ============================================================
+     CONFIRMACIONES (modal propio; sustituye a confirm() / prompt())
+     askConfirm({ title, message, ok, danger, type }) → Promise<boolean>
+     type: texto que hay que escribir para habilitar el botón (p. ej. «BORRAR»)
+     ============================================================ */
+  let cfResolve = null;
+  function askConfirm({ title = '¿Seguro?', message = '', ok = 'Aceptar', danger = false, type = '' } = {}) {
+    const dlg = $('#confirmDialog');
+    if (cfResolve) cfResolve(false);
+    $('#cfTitle').textContent = title;
+    $('#cfMsg').textContent = message;
+    const okBtn = $('#cfOk');
+    okBtn.textContent = ok;
+    okBtn.className = 'btn ' + (danger ? 'btn--danger' : 'btn--primary');
+    $('#cfIco').className = 'cf-ico' + (danger ? ' cf-ico--bad' : '');
+    $('#cfTypeWrap').hidden = !type;
+    $('#cfType').value = '';
+    $('#cfTypeLbl').textContent = type ? `Escribe ${type} para confirmar` : '';
+    okBtn.disabled = !!type;
+    state.cfType = type;
+    return new Promise(resolve => {
+      cfResolve = resolve;
+      if (!dlg.open) dlg.showModal();
+      (type ? $('#cfType') : $('#cfCancel')).focus();
+    });
+  }
+  function closeConfirm(result) {
+    const dlg = $('#confirmDialog');
+    const r = cfResolve; cfResolve = null;
+    if (dlg.open) dlg.close();
+    if (r) r(result);
+  }
+  function bindConfirm() {
+    $('#confirmForm').addEventListener('submit', e => {
+      e.preventDefault();
+      if (state.cfType && $('#cfType').value.trim().toUpperCase() !== state.cfType) return;
+      closeConfirm(true);
+    });
+    $('#cfCancel').addEventListener('click', () => closeConfirm(false));
+    $('#confirmDialog').addEventListener('cancel', e => { e.preventDefault(); closeConfirm(false); });   // Esc
+    $('#confirmDialog').addEventListener('click', e => { if (e.target === e.currentTarget) closeConfirm(false); });
+    $('#cfType').addEventListener('input', () => {
+      $('#cfOk').disabled = $('#cfType').value.trim().toUpperCase() !== state.cfType;
+    });
+  }
+
   const fail = e => { if (!e.handled) toast(e.message || 'Algo ha fallado.'); };
 
   /* ============================================================
@@ -759,7 +805,7 @@
   async function deleteChatMsg(msgId) {
     const c = state.chat;
     const id = c.open;
-    if (!confirm('¿Borrar este mensaje para todos?')) return;
+    if (!(await askConfirm({ title: 'Borrar mensaje', message: 'Se borrará para todos los participantes de la conversación.', ok: 'Borrar', danger: true }))) return;
     try {
       await api('DELETE', `chat/${encodeURIComponent(id)}/${encodeURIComponent(msgId)}`, undefined, true);
       c.msgs[id] = (c.msgs[id] || []).filter(m => m.id !== msgId);
@@ -961,7 +1007,7 @@
     const id = editingPost;
     const p = state.posts.find(x => x.id === id);
     if (!p) return;
-    if (!confirm(`¿Eliminar «${p.title}»? Dejará de verse para todo el equipo.`)) return;
+    if (!(await askConfirm({ title: 'Eliminar publicación', message: `«${p.title}» dejará de verse para todo el equipo.`, ok: 'Eliminar', danger: true }))) return;
     try {
       await api('DELETE', `news/${encodeURIComponent(id)}`);
       state.posts = state.posts.filter(x => x.id !== id);
@@ -1189,7 +1235,7 @@
     const id = editingKb;
     const e = state.kb.find(x => x.id === id);
     if (!e) return;
-    if (!confirm(`¿Eliminar «${e.question}»? Dejará de verse para todo el equipo.`)) return;
+    if (!(await askConfirm({ title: 'Eliminar entrada', message: `«${e.question}» dejará de verse para todo el equipo.`, ok: 'Eliminar', danger: true }))) return;
     try {
       await api('DELETE', `kb/${encodeURIComponent(id)}`);
       state.kb = state.kb.filter(x => x.id !== id);
@@ -1220,7 +1266,7 @@
   }
 
   async function loadKbSeed() {
-    if (!confirm('Se cargará el contenido base de AppXpand SOLO en las secciones del Centro comercial que estén vacías. No toca las que ya tienen contenido. ¿Continuar?')) return;
+    if (!(await askConfirm({ title: 'Cargar contenido base', message: 'Se cargará el contenido base de AppXpand solo en las secciones del Centro comercial que estén vacías. No toca las que ya tienen contenido.', ok: 'Cargar' }))) return;
     try {
       const r = await api('POST', 'kb/seed');
       state.kb = r.kb;
@@ -1233,9 +1279,11 @@
      EQUIPO (admin)
      ============================================================ */
   function renderEquipo() {
-    const members = state.users.filter(u => u.role === 'comercial' || state.data.clients.some(c => c.owner === u.id));
+    // comerciales y también administradores creados desde el generador (la cuenta maestra solo si tiene clientes)
+    const members = state.users.filter(u => u.id !== 'admin' || state.data.clients.some(c => c.owner === u.id))
+      .sort((x, y) => (x.role === y.role ? 0 : x.role === 'admin' ? -1 : 1) || String(x.name).localeCompare(String(y.name), 'es'));
     if (!members.length) {
-      $('#teamOut').innerHTML = '<p class="empty">Todavía no hay comerciales. Crea el primero con el generador de códigos.</p>';
+      $('#teamOut').innerHTML = '<p class="empty">Todavía no hay nadie en el equipo. Crea el primer acceso con el generador de códigos.</p>';
       return;
     }
     const rows = members.map(u => {
@@ -1257,7 +1305,7 @@
       </tr>`;
     }).join('');
     $('#teamOut').innerHTML = `<table class="team"><thead><tr>
-      <th>Comercial</th><th>Clientes</th><th>En curso</th><th>Ganados</th><th>Valor en curso</th><th>Conversión</th><th>Vencidos</th><th>Última actividad</th><th></th>
+      <th>Persona</th><th>Clientes</th><th>En curso</th><th>Ganados</th><th>Valor en curso</th><th>Conversión</th><th>Vencidos</th><th>Última actividad</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>`;
   }
 
@@ -1283,7 +1331,7 @@
   }
   async function resetUserCode(id) {
     const u = userById(id); if (!u) return;
-    if (!confirm(`¿Generar un código nuevo para ${u.name}? El anterior dejará de funcionar.`)) return;
+    if (!(await askConfirm({ title: 'Generar código nuevo', message: `${u.name} perderá el acceso con su código actual (y su contraseña, si la tenía). Se generará uno nuevo.`, ok: 'Generar código', danger: true }))) return;
     try {
       const r = await api('POST', `users/${encodeURIComponent(id)}/reset`);
       showCode(`Nuevo código para ${r.user.name}:`, r.code);
@@ -1498,7 +1546,7 @@
     const id = state.editingId;
     const c = state.data.clients.find(x => x.id === id);
     if (!c) return;
-    if (!confirm(`¿Eliminar a «${c.business}»? Esta acción no se puede deshacer.`)) return;
+    if (!(await askConfirm({ title: 'Eliminar cliente', message: `Se eliminará «${c.business}». Esta acción no se puede deshacer.`, ok: 'Eliminar', danger: true }))) return;
     try {
       await api('DELETE', `clients/${encodeURIComponent(id)}`);
       state.data.clients = state.data.clients.filter(x => x.id !== id);
@@ -1560,7 +1608,7 @@
   }
 
   async function loadDemo() {
-    if (!confirm('Se añadirán clientes de ejemplo a los que ya tienes. ¿Continuar?')) return;
+    if (!(await askConfirm({ title: 'Cargar datos de ejemplo', message: 'Se añadirán clientes de ejemplo a los que ya tienes.', ok: 'Añadir' }))) return;
     const reps = state.users.filter(u => u.role === 'comercial');
     const owners = reps.length ? reps : [state.user];
     const D = [
@@ -1589,8 +1637,7 @@
     try { await sendImport(clients); toast('Datos de ejemplo cargados'); } catch (e) { fail(e); }
   }
   async function wipeAll() {
-    if (!confirm('¿Borrar TODOS los clientes de la plataforma? No se puede deshacer.')) return;
-    if (prompt('Escribe BORRAR para confirmar') !== 'BORRAR') return;
+    if (!(await askConfirm({ title: 'Borrar todos los clientes', message: 'Se borrarán TODOS los clientes de la plataforma. No se puede deshacer.', ok: 'Borrar todo', danger: true, type: 'BORRAR' }))) return;
     try { await api('DELETE', 'clients'); await refresh(true); toast('Todos los clientes borrados'); } catch (e) { fail(e); }
   }
 
@@ -1900,18 +1947,18 @@
       if (d.file) openFile(d.file);
       else if (d.review) openDec(d.review);
       else if (d.reopen) payAct(() => api('PUT', `expenses/${encodeURIComponent(d.reopen)}`, { decision: 'pendiente' }), 'Gasto reabierto');
-      else if (d.retire) { if (confirm('¿Retirar este gasto?')) payAct(() => api('DELETE', `expenses/${encodeURIComponent(d.retire)}`), 'Gasto retirado'); }
+      else if (d.retire) askConfirm({ title: 'Retirar gasto', message: 'El gasto se retirará de la lista.', ok: 'Retirar', danger: true }).then(ok => { if (ok) payAct(() => api('DELETE', `expenses/${encodeURIComponent(d.retire)}`), 'Gasto retirado'); });
       else if (d.benall) {
         const [owner, mode] = d.benall.split('|');
         payAct(() => api('PUT', 'pay/benefits', { owner, cat: '*', mode }), 'Beneficios actualizados');
       }
       else if (d.adj) openAdj(d.adj);
-      else if (d.deladj) { if (confirm('¿Quitar este ajuste?')) payAct(() => api('DELETE', `pay/adjustments/${encodeURIComponent(d.deladj)}`), 'Ajuste eliminado'); }
+      else if (d.deladj) askConfirm({ title: 'Quitar ajuste', message: 'El ajuste se eliminará del cálculo de pagos.', ok: 'Quitar', danger: true }).then(ok => { if (ok) payAct(() => api('DELETE', `pay/adjustments/${encodeURIComponent(d.deladj)}`), 'Ajuste eliminado'); });
       else if (d.addexp !== undefined) openExp();
       else if (d.pay) {
         const p = state.pay.people.find(x => x.id === d.pay); if (!p || !p.due) return;
-        if (confirm(`¿Marcar como pagados ${money2(p.due)} a ${p.name}?\nSe guardará el desglose en el historial.`))
-          payAct(() => api('POST', 'pay/payouts', { owner: d.pay }), 'Pago registrado');
+        askConfirm({ title: 'Registrar pago', message: `¿Marcar como pagados ${money2(p.due)} a ${p.name}? Se guardará el desglose en el historial.`, ok: 'Marcar como pagado' })
+          .then(ok => { if (ok) payAct(() => api('POST', 'pay/payouts', { owner: d.pay }), 'Pago registrado'); });
       }
     });
     out.addEventListener('change', e => {
@@ -2248,6 +2295,7 @@
     bindTeam();
     bindProfile();
     bindReassign();
+    bindConfirm();
 
     // Al volver a la pestaña, traer lo último
     document.addEventListener('visibilitychange', () => {
