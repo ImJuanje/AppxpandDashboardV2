@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0b1b3a">
+  <title>Plataforma comerciales · AppXpand</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232563eb'/%3E%3Cstop offset='1' stop-color='%2322c1a1'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Ctext x='16' y='22.5' font-family='Arial' font-weight='800' font-size='19' text-anchor='middle' fill='white'%3EA%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('appxpand_theme'); } catch (e) {}
+      if (t !== 'dark' && t !== 'light') t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<main id="loginView" class="login">
+  <canvas class="login__canvas" id="loginCanvas" aria-hidden="true"></canvas>
+  <div class="login__card" style="position:relative">
+    <button class="btn btn--ghost theme-btn login__theme" data-theme-toggle type="button" aria-label="Cambiar a modo oscuro"></button>
+    <a class="brand" href="https://appxpand.netlify.app" aria-label="AppXpand, ir a la web">
+      <span class="brand__mark" aria-hidden="true">A</span>
+      <span class="brand__name">App<b>Xpand</b></span>
+    </a>
+    <h1>Acceso comerciales</h1>
+    <p class="muted" id="loginHint">Introduce el código de alta que te ha facilitado AppXpand.</p>
+
+    <form id="loginForm" autocomplete="on" novalidate>
+      <div id="loginCodeBox">
+        <label for="code">Código de alta</label>
+        <div class="pw">
+          <input id="code" name="code" type="password" inputmode="text" autocapitalize="characters"
+                 autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX" required>
+          <button type="button" id="toggleCode" class="pw__btn" aria-label="Mostrar u ocultar el código">Ver</button>
+        </div>
+      </div>
+      <div id="loginPassBox" hidden>
+        <label for="loginUser">Usuario</label>
+        <input id="loginUser" name="username" type="text" autocomplete="username" autocapitalize="none"
+               spellcheck="false" placeholder="Tu nombre o usuario">
+        <label for="loginPass">Contraseña</label>
+        <div class="pw">
+          <input id="loginPass" name="password" type="password" autocomplete="current-password" placeholder="Tu contraseña">
+          <button type="button" id="togglePass" class="pw__btn" aria-label="Mostrar u ocultar la contraseña">Ver</button>
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="remember"> <span>Mantener sesión en este dispositivo</span></label>
+      <p id="loginError" class="error" role="alert" hidden></p>
+      <button class="btn btn--primary btn--block" type="submit">Entrar</button>
+      <button class="linkbtn" type="button" id="loginSwitch">Entrar con usuario y contraseña</button>
+    </form>
+
+    <a class="back" href="https://appxpand.netlify.app">← Volver a la web</a>
+  </div>
+</main>
+
+<!-- ============ APP ============ -->
+<div id="appView" hidden>
+  <header class="topbar">
+    <div class="topbar__in">
+      <a class="brand brand--sm" href="https://appxpand.netlify.app" aria-label="AppXpand">
+        <span class="brand__mark" aria-hidden="true">A</span>
+        <span class="brand__name">App<b>Xpand</b></span>
+        <span class="tag">Plataforma</span>
+      </a>
+
+      <div class="user">
+        <span class="avatar" id="userAvatar" aria-hidden="true"></span>
+        <div class="user__txt"><strong id="userName"></strong><small id="userRole"></small></div>
+        <button class="btn btn--ghost theme-btn" data-theme-toggle type="button" aria-label="Cambiar a modo oscuro"></button>
+        <button class="btn btn--ghost btn--sm" id="profileBtn" type="button">Mi perfil</button>
+        <button class="btn btn--ghost btn--sm" id="logoutBtn" type="button">Salir</button>
+      </div>
+
+      <nav class="tabs" id="tabs" aria-label="Secciones">
+        <button type="button" data-view="resumen">Resumen</button>
+        <button type="button" data-view="clientes">Clientes <span class="tab-badge" id="leadBadge" hidden>0</span></button>
+        <button type="button" data-view="kb">Centro comercial</button>
+        <button type="button" data-view="news">AppXnews <span class="tab-badge" id="newsBadge" hidden>0</span></button>
+        <button type="button" data-view="chat">Chat <span class="tab-badge" id="chatBadge" hidden>0</span></button>
+        <button type="button" data-view="pay">Pagos <span class="tab-badge" id="payBadge" hidden>0</span></button>
+        <button type="button" data-view="equipo" data-admin>Equipo</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+
+    <!-- RESUMEN -->
+    <section id="viewResumen" aria-labelledby="resumenTitle">
+      <div class="sec-head">
+        <div>
+          <h2 id="resumenTitle">Hola</h2>
+          <p class="muted" id="resumenSub"></p>
+        </div>
+        <label class="inline-select" id="resumenOwnerWrap" hidden>
+          <span>Comercial</span>
+          <select id="resumenOwner"></select>
+        </label>
+      </div>
+
+      <button type="button" class="news-banner lead-banner" hidden></button>
+      <button type="button" class="news-banner" id="newsBanner" hidden></button>
+
+      <div class="kpis" id="kpis"></div>
+
+      <div class="grid2">
+        <article class="card">
+          <h3>Embudo de ventas</h3>
+          <div id="funnel" class="funnel"></div>
+        </article>
+        <article class="card">
+          <h3>Seguimientos próximos</h3>
+          <div id="followList" class="follow-list"></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- CLIENTES -->
+    <section id="viewClientes" aria-labelledby="clientesTitle" hidden>
+      <button type="button" class="news-banner lead-banner" hidden></button>
+      <div class="sec-head">
+        <div>
+          <h2 id="clientesTitle">Clientes</h2>
+          <p class="muted" id="count"></p>
+        </div>
+        <button class="btn btn--primary" id="newClient" type="button">+ Nuevo cliente</button>
+      </div>
+
+      <div class="toolbar">
+        <div class="search">
+          <input id="fQ" type="search" placeholder="Buscar negocio, contacto, teléfono…" aria-label="Buscar clientes">
+        </div>
+        <button class="btn btn--ghost btn-filters" id="toggleFilters" type="button" aria-expanded="false" aria-controls="filters">
+          Filtros <span class="count-badge" id="filterBadge" hidden>0</span>
+        </button>
+        <div class="seg" role="group" aria-label="Vista">
+          <button type="button" data-cview="lista" aria-pressed="true">Lista</button>
+          <button type="button" data-cview="tablero" aria-pressed="false">Tablero</button>
+        </div>
+      </div>
+
+      <div class="filters" id="filters">
+        <label>Estado<select id="fStatus"></select></label>
+        <label>Servicio<select id="fService"></select></label>
+        <label>Tipo de negocio<select id="fType"></select></label>
+        <label>Ciudad<select id="fCity"></select></label>
+        <label id="fOwnerWrap" hidden>Comercial<select id="fOwner"></select></label>
+        <label>Seguimiento<select id="fFollow"></select></label>
+        <label>Ordenar por<select id="fSort"></select></label>
+        <div class="filters__actions">
+          <button class="btn btn--ghost btn--sm" id="clearFilters" type="button">Limpiar filtros</button>
+          <button class="btn btn--ghost btn--sm" id="exportCsv" type="button">Exportar CSV</button>
+        </div>
+      </div>
+
+      <div id="clientsOut" class="clients-out"></div>
+    </section>
+
+    <!-- CENTRO DE CONOCIMIENTO -->
+    <section id="viewKb" aria-labelledby="kbTitle" hidden>
+      <div class="sec-head">
+        <div>
+          <h2 id="kbTitle">Centro de <span class="grad">conocimiento</span></h2>
+          <p class="muted">Todo lo que necesitas para vender con confianza.</p>
+        </div>
+        <button class="btn btn--primary" id="newKb" type="button" data-admin hidden>+ Nueva entrada</button>
+      </div>
+
+      <div class="kb-search">
+        <input id="kbQ" type="search" placeholder="Buscar objeciones, precios, servicios…" aria-label="Buscar en el centro de conocimiento" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="kbOut"></div>
+      <p class="kb-help">¿No encuentras la respuesta? <strong>Consulta con dirección antes de comprometerte con el cliente.</strong></p>
+    </section>
+
+    <!-- APPXNEWS -->
+    <section id="viewNews" aria-labelledby="newsTitle" hidden>
+      <div class="sec-head">
+        <div>
+          <h2 id="newsTitle">AppX<span class="grad">news</span></h2>
+          <p class="muted">Avisos, novedades e información del equipo.</p>
+        </div>
+        <button class="btn btn--primary" id="newPost" type="button" data-admin hidden>+ Nueva publicación</button>
+      </div>
+
+      <article class="card rank" id="rankCard" hidden>
+        <div class="rank__head">
+          <h3 id="rankTitle">Top comerciales</h3>
+          <label class="switch" id="rankToggleWrap" data-admin hidden>
+            <input type="checkbox" id="rankToggle"> <span>Visible para los comerciales</span>
+          </label>
+        </div>
+        <ol class="rank-list" id="rankList"></ol>
+        <p class="muted rank__note" id="rankNote"></p>
+      </article>
+
+      <div class="chips" id="newsChips" role="group" aria-label="Filtrar publicaciones"></div>
+      <div id="newsList" class="news-list"></div>
+    </section>
+
+    <!-- CHAT -->
+    <section id="viewChat" aria-labelledby="chatH" hidden>
+      <div class="sec-head sec-head--tight">
+        <div>
+          <h2 id="chatH">Chat</h2>
+          <p class="muted" id="chatHint"></p>
+        </div>
+      </div>
+      <div class="chat" id="chat">
+        <aside class="chat__list" id="chatList" aria-label="Conversaciones"></aside>
+        <section class="chat__thread" aria-label="Mensajes">
+          <header class="chat__head">
+            <button type="button" class="icon-btn chat__back" id="chatBack" aria-label="Volver a las conversaciones">←</button>
+            <div><strong id="chatTitle"></strong><small id="chatSub" class="muted"></small></div>
+          </header>
+          <div class="chat__msgs" id="chatMsgs" role="log" aria-live="polite"></div>
+          <form class="chat__form" id="chatForm" autocomplete="off">
+            <textarea id="chatInput" rows="1" maxlength="1000" placeholder="Escribe un mensaje…" aria-label="Mensaje"></textarea>
+            <button class="btn btn--primary" type="submit">Enviar</button>
+          </form>
+        </section>
+      </div>
+    </section>
+
+    <!-- EQUIPO (admin) -->
+    <!-- PAGOS Y GASTOS -->
+    <section id="viewPay" aria-labelledby="payTitle" hidden>
+      <div class="sec-head">
+        <div>
+          <h2 id="payTitle">Pagos y gastos</h2>
+          <p class="muted" id="paySub"></p>
+        </div>
+        <div class="seg" id="paySeg" role="group" aria-label="Vista de pagos"></div>
+      </div>
+      <div id="payOut"></div>
+    </section>
+
+    <section id="viewEquipo" aria-labelledby="equipoTitle" hidden>
+      <div class="sec-head">
+        <div>
+          <h2 id="equipoTitle">Equipo comercial</h2>
+          <p class="muted">Cómo va cada comercial y qué clientes lleva.</p>
+        </div>
+      </div>
+
+      <article class="card card--flush">
+        <div id="teamOut"></div>
+      </article>
+
+      <article class="card">
+        <div class="vis-head">
+          <h3>Accesos al dashboard</h3>
+          <label class="vis-range">Periodo
+            <select id="visitsDays"><option value="7">Últimos 7 días</option><option value="14">Últimos 14 días</option><option value="30">Últimos 30 días</option></select>
+          </label>
+        </div>
+        <p class="muted">Cuántas veces entra cada comercial. Una entrada nueva cuenta cuando pasan más de 30 minutos desde la anterior, así que recargar la página no suma. Solo lo ve la administración.</p>
+        <div id="visitsOut"></div>
+      </article>
+
+      <article class="card">
+        <h3>Equipo en la web</h3>
+        <p class="muted">Quién aparece en la página «Equipo» y con quién pueden agendar una llamada los clientes. El email no se publica: solo sirve para avisar de cada cita. Foto y nombre son opcionales y deben contar con el visto bueno de cada persona.</p>
+        <div id="teamWebOut"></div>
+      </article>
+
+      <article class="card">
+        <h3>Perfiles del equipo</h3>
+        <p class="muted">Foto, cumpleaños y datos que cada persona ha querido compartir. Solo los ves tú; cada persona edita los suyos desde «Mi perfil».</p>
+        <div id="teamProfilesOut"></div>
+      </article>
+
+      <div class="grid2">
+        <article class="card">
+          <h3>Generador de códigos de alta</h3>
+          <p class="muted">Crea el acceso de un comercial o de otro administrador: se le asigna un código y ya puede entrar. Puedes generar un código nuevo o darlo de baja desde la tabla de arriba.</p>
+          <form id="genForm" class="gen">
+            <label>Nombre<input id="genName" type="text" maxlength="40" placeholder="Ej. Lucía" required></label>
+            <label>Rol
+              <select id="genRole"><option value="comercial">Comercial</option><option value="admin">Administrador</option></select>
+            </label>
+            <button class="btn btn--primary" type="submit">Generar código</button>
+          </form>
+          <div id="genOut" class="gen-out" hidden>
+            <p class="muted" id="genMsg"></p>
+            <div class="code-box"><code id="genCode"></code><button class="btn btn--ghost btn--sm" type="button" data-copy="#genCode">Copiar</button></div>
+            <p class="muted">Guárdalo ahora: por seguridad no se vuelve a mostrar. Si el comercial lo pierde, genera uno nuevo desde la tabla de arriba.</p>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>Copias de seguridad y datos</h3>
+          <p class="muted">Los clientes se guardan en el servidor y todos los ven al instante. Aquí puedes descargar una copia o restaurarla.</p>
+          <div class="stack">
+            <button class="btn btn--ghost" id="exportAll" type="button">Descargar todo (.json)</button>
+            <label class="btn btn--ghost file-btn">Restaurar copia (.json)<input id="importFile" type="file" accept="application/json,.json" hidden></label>
+            <button class="btn btn--ghost" id="loadDemo" type="button">Cargar datos de ejemplo</button>
+            <button class="btn btn--ghost" id="loadKb" type="button">Cargar contenido base del Centro comercial</button>
+            <button class="btn btn--danger" id="wipeAll" type="button">Borrar todos los clientes</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ============ DIÁLOGO CLIENTE ============ -->
+<dialog id="clientDialog" aria-labelledby="dlgTitle">
+  <form id="clientForm" novalidate>
+    <header class="dlg-head">
+      <div>
+        <h3 id="dlgTitle">Nuevo cliente</h3>
+        <small id="dlgSub" class="muted"></small>
+      </div>
+      <button type="button" class="icon-btn" id="dlgClose" aria-label="Cerrar">✕</button>
+    </header>
+
+    <div class="dlg-quick" id="dlgQuick" hidden></div>
+
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label class="span2">Negocio *
+          <input id="cBusiness" type="text" maxlength="120" required placeholder="Nombre del negocio">
+        </label>
+        <label>Persona de contacto<input id="cContact" type="text" maxlength="80" placeholder="Nombre y apellidos"></label>
+        <label>Teléfono<input id="cPhone" type="tel" maxlength="30" inputmode="tel" placeholder="600 000 000"></label>
+        <label class="span2">Email<input id="cEmail" type="email" maxlength="120" placeholder="correo@negocio.es"></label>
+        <label>Tipo de negocio<select id="cType"></select></label>
+        <label>Servicio de interés<select id="cService"></select></label>
+        <label>Ciudad<select id="cCity"></select></label>
+        <label>Estado<select id="cStatus"></select></label>
+        <label>Valor estimado (€)<input id="cValue" type="number" min="0" step="1" inputmode="numeric" placeholder="330"></label>
+        <label>Pack de mantenimiento prepago
+          <select id="cPack"><option value="0">Sin pack</option><option value="3">3 meses</option><option value="6">6 meses</option><option value="12">12 meses</option></select>
+        </label>
+        <label>Importe del pack (€)<input id="cPackValue" type="number" min="0" step="0.01" inputmode="decimal" placeholder="199,47"></label>
+        <small class="muted span2">El pack va aparte: no lo incluyas en el valor. Cuenta para tu comisión solo la parte proporcional (3 m → 1 mes, 6 m → 2, 12 m → 3).</small>
+        <label>Próximo seguimiento<input id="cNext" type="date"></label>
+        <label class="span2" id="cOwnerWrap" hidden>Comercial asignado<select id="cOwner"></select></label>
+        <label class="span2">Notas<textarea id="cNotes" rows="3" maxlength="1500" placeholder="Qué necesita, objeciones, siguiente paso…"></textarea></label>
+      </div>
+
+      <p id="formError" class="error" role="alert" hidden></p>
+
+      <section id="logSection" class="log" hidden>
+        <h4>Historial</h4>
+        <div class="log__add">
+          <input id="logInput" type="text" maxlength="400" placeholder="Añadir nota de seguimiento…">
+          <button class="btn btn--ghost btn--sm" id="logAdd" type="button">Añadir</button>
+        </div>
+        <ul id="logList"></ul>
+      </section>
+    </div>
+
+    <footer class="dlg-foot">
+      <button type="button" class="btn btn--danger-ghost" id="dlgDelete" hidden>Eliminar</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="dlgCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Guardar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO PUBLICACIÓN (admin) ============ -->
+<dialog id="newsDialog" aria-labelledby="newsDlgTitle">
+  <form id="newsForm" novalidate>
+    <header class="dlg-head">
+      <div>
+        <h3 id="newsDlgTitle">Nueva publicación</h3>
+        <small id="newsDlgSub" class="muted"></small>
+      </div>
+      <button type="button" class="icon-btn" id="newsDlgClose" aria-label="Cerrar">✕</button>
+    </header>
+
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label class="span2">Título *
+          <input id="pTitle" type="text" maxlength="120" required placeholder="Ej. Nueva campaña de Navidad">
+        </label>
+        <label>Categoría<select id="pCat"></select></label>
+        <label class="check pin"><input type="checkbox" id="pPinned"> <span>Fijar arriba</span></label>
+        <label class="span2">Contenido *
+          <textarea id="pBody" rows="9" maxlength="5000" placeholder="Escribe aquí. Deja una línea en blanco para separar párrafos y empieza una línea con «- » para hacer listas. Los enlaces (https://…) se vuelven clicables."></textarea>
+        </label>
+      </div>
+      <p id="newsError" class="error" role="alert" hidden></p>
+    </div>
+
+    <footer class="dlg-foot">
+      <button type="button" class="btn btn--danger-ghost" id="newsDelete" hidden>Eliminar</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="newsCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Publicar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO NUEVO GASTO ============ -->
+<dialog id="expDialog" aria-labelledby="expDlgTitle">
+  <form id="expForm" novalidate>
+    <header class="dlg-head">
+      <div><h3 id="expDlgTitle">Añadir gasto</h3><small class="muted">Se revisa antes de sumarse a tu pago</small></div>
+      <button type="button" class="icon-btn" id="expClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label class="span2">Tipo de gasto<select id="xCat"></select></label>
+        <small class="muted span2" id="xCapHint"></small>
+        <label class="span2">Concepto *<input id="xConcept" type="text" maxlength="100" required placeholder="Ej. Gasolina visita peluquería en Albacete"></label>
+        <label>Importe (€) *<input id="xAmount" type="number" min="0.01" step="0.01" inputmode="decimal" required placeholder="25,50"></label>
+        <label>Fecha *<input id="xDate" type="date" required></label>
+        <label class="span2">Justificante * (foto o PDF)<input id="xFile" type="file" accept="image/*,application/pdf" required></label>
+        <label class="span2">Nota (opcional)<textarea id="xNote" rows="2" maxlength="500" placeholder="Cliente o visita a la que corresponde"></textarea></label>
+      </div>
+      <p id="expError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="expCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Enviar gasto</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO REVISAR GASTO (admin) ============ -->
+<dialog id="decDialog" aria-labelledby="decDlgTitle">
+  <form id="decForm" novalidate onsubmit="return false">
+    <header class="dlg-head">
+      <div><h3 id="decDlgTitle">Revisar gasto</h3></div>
+      <button type="button" class="icon-btn" id="decClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <p id="decInfo"></p>
+      <div class="form-grid">
+        <label>Importe a aprobar (€)<input id="dAmount" type="number" min="0.01" step="0.01" inputmode="decimal"></label>
+        <label class="span2">Mensaje para el comercial (obligatorio si rechazas)<textarea id="dNote" rows="2" maxlength="300"></textarea></label>
+      </div>
+      <p id="decError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <button type="button" class="btn btn--danger" id="decReject">Rechazar</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--primary" id="decApprove">Aprobar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO AJUSTE O BONO (admin) ============ -->
+<dialog id="adjDialog" aria-labelledby="adjDlgTitle">
+  <form id="adjForm" novalidate>
+    <header class="dlg-head">
+      <div><h3 id="adjDlgTitle">Ajuste o bono</h3><small class="muted">Se suma (o resta) en su próximo pago</small></div>
+      <button type="button" class="icon-btn" id="adjClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label class="span2">Comercial<select id="aOwner"></select></label>
+        <label class="span2">Concepto *<input id="aConcept" type="text" maxlength="100" required placeholder="Ej. Bono por objetivo trimestral"></label>
+        <label class="span2">Importe (€) *<input id="aAmount" type="number" step="0.01" inputmode="decimal" required placeholder="50 (negativo para descontar)"></label>
+      </div>
+      <p id="adjError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="adjCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Añadir</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO PERFIL EN LA WEB ============ -->
+<dialog id="teamDialog" aria-labelledby="tmTitle">
+  <form id="teamForm" novalidate>
+    <header class="dlg-head">
+      <div><h3 id="tmTitle">Perfil</h3><small class="muted">Lo que verán los clientes y cuándo se puede agendar</small></div>
+      <button type="button" class="icon-btn" id="tmClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label>Nombre público<input id="tmName" type="text" maxlength="40" placeholder="Ej. Lucía"></label>
+        <label>Zona<input id="tmZone" type="text" maxlength="60" placeholder="Ej. Albacete capital"></label>
+        <label class="span2">Frase corta<textarea id="tmBio" rows="2" maxlength="160" placeholder="Ej. Te ayudo a que tu negocio salga en Google."></textarea></label>
+        <label class="span2">Email para avisos de cita (privado)<input id="tmEmail" type="email" maxlength="120" placeholder="nombre@correo.com"></label>
+        <div class="span2"><span class="lbl">Foto (opcional)</span>
+          <div class="tw-photo"><span id="tmPrev"></span><input id="tmFile" type="file" accept="image/*"><button type="button" class="btn btn--ghost btn--sm" id="tmNoPhoto">Quitar foto</button></div></div>
+        <div class="span2"><span class="lbl">Días disponibles</span><div class="chks" id="tmDays"></div></div>
+        <label>Desde<input id="tmFrom" type="time"></label>
+        <label>Hasta<input id="tmTo" type="time"></label>
+        <label class="chk span2"><input id="tmShow" type="checkbox"> Mostrar en la web y permitir reservar con esta persona</label>
+      </div>
+      <p id="tmError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="tmCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Guardar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO ENTRADA DEL CENTRO (admin) ============ -->
+<dialog id="kbDialog" aria-labelledby="kbDlgTitle">
+  <form id="kbForm" novalidate>
+    <header class="dlg-head">
+      <div>
+        <h3 id="kbDlgTitle">Nueva entrada</h3>
+        <small id="kbDlgSub" class="muted"></small>
+      </div>
+      <button type="button" class="icon-btn" id="kbDlgClose" aria-label="Cerrar">✕</button>
+    </header>
+
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label>Sección<select id="kSection"></select></label>
+        <label id="kCatWrap">Tipo de objeción<select id="kCat"></select></label>
+        <label class="span2"><span id="kQuestionLbl">Título *</span>
+          <input id="kQuestion" type="text" maxlength="200" required placeholder="Ej. «Me parece demasiado caro»">
+        </label>
+        <label class="span2"><span id="kAnswerLbl">Contenido *</span>
+          <textarea id="kAnswer" rows="9" maxlength="4000" placeholder="Escribe aquí el texto."></textarea>
+          <small class="muted">Línea en blanco = nuevo párrafo · «- » al empezar = lista · «1. » = lista numerada · «| a | b |» = tabla (la primera fila es la cabecera) · los enlaces https:// se vuelven clicables.</small>
+        </label>
+        <label class="span2">Palabras clave para el buscador
+          <input id="kKeywords" type="text" maxlength="300" placeholder="caro, costoso, mucho dinero, precio alto…">
+          <small class="muted">Separadas por comas. Escribe las formas en que un cliente (o un comercial) lo diría: así «es caro» encuentra esta respuesta.</small>
+        </label>
+      </div>
+      <p id="kbError" class="error" role="alert" hidden></p>
+    </div>
+
+    <footer class="dlg-foot">
+      <button type="button" class="btn btn--danger-ghost" id="kbDelete" hidden>Eliminar</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="kbCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Guardar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO DAR DE BAJA (reparto de clientes) ============ -->
+<dialog id="reassignDialog" aria-labelledby="raTitle">
+  <form id="reassignForm" novalidate>
+    <header class="dlg-head">
+      <div><h3 id="raTitle">Dar de baja</h3><small class="muted" id="raSub"></small></div>
+      <button type="button" class="icon-btn" id="raClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <p class="muted" id="raIntro"></p>
+      <div class="ra-bulk" id="raBulk">
+        <label>Asignar todos a<select id="raAll"></select></label>
+        <button type="button" class="btn btn--ghost btn--sm" id="raAllBtn">Aplicar a todos</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="raSplit">Repartir a partes iguales</button>
+      </div>
+      <div class="ra-list" id="raList"></div>
+      <p id="raError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="raCancel">Cancelar</button>
+      <button type="submit" class="btn btn--danger" id="raOk">Dar de baja</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO MI PERFIL ============ -->
+<dialog id="profileDialog" aria-labelledby="pfTitle">
+  <form id="profileForm" novalidate>
+    <header class="dlg-head">
+      <div><h3 id="pfTitle">Mi perfil</h3><small class="muted" id="pfName"></small></div>
+      <button type="button" class="icon-btn" id="pfClose" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="dlg-body">
+      <div class="form-grid">
+        <div class="span2"><span class="lbl">Foto</span>
+          <div class="tw-photo"><span id="pfPrev"></span><input id="pfFile" type="file" accept="image/*"><button type="button" class="btn btn--ghost btn--sm" id="pfNoPhoto">Quitar foto</button></div></div>
+        <label>Cumpleaños: día<select id="pfDay"></select></label>
+        <label>Cumpleaños: mes<select id="pfMonth"></select></label>
+        <label class="span2">Teléfono<input id="pfPhone" type="tel" maxlength="30" inputmode="tel" placeholder="600 000 000"></label>
+        <label class="span2">Algo sobre ti (aficiones, qué te gusta…)<textarea id="pfBio" rows="2" maxlength="200" placeholder="Ej. Me encanta la montaña y el café."></textarea></label>
+        <small class="muted span2">Todo es voluntario. Solo lo ve la administración, y puedes cambiarlo o borrarlo cuando quieras.</small>
+
+        <div class="span2 pf-pass" id="pfPassBox" hidden>
+          <span class="lbl">Contraseña de acceso</span>
+          <small class="muted" id="pfPassHint"></small>
+          <div class="form-grid">
+            <label class="span2" id="pfCurWrap">Contraseña actual<input id="pfPwCur" type="password" autocomplete="current-password"></label>
+            <label>Nueva contraseña<input id="pfPwNew" type="password" maxlength="72" autocomplete="new-password"></label>
+            <label>Repite la nueva<input id="pfPwNew2" type="password" maxlength="72" autocomplete="new-password"></label>
+          </div>
+          <p id="pfPwError" class="error" role="alert" hidden></p>
+          <button type="button" class="btn btn--ghost btn--sm" id="pfPwSave">Crear contraseña</button>
+        </div>
+      </div>
+      <p id="pfError" class="error" role="alert" hidden></p>
+    </div>
+    <footer class="dlg-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="pfCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Guardar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO DE CONFIRMACIÓN (sustituye a confirm/prompt del navegador) ============ -->
+<dialog id="confirmDialog" aria-labelledby="cfTitle" aria-describedby="cfMsg">
+  <form id="confirmForm" novalidate>
+    <div class="cf-body">
+      <span class="cf-ico" id="cfIco" aria-hidden="true">!</span>
+      <h3 id="cfTitle">¿Seguro?</h3>
+      <p id="cfMsg" class="muted"></p>
+      <label id="cfTypeWrap" hidden><span id="cfTypeLbl"></span><input id="cfType" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+    </div>
+    <footer class="cf-foot">
+      <button type="button" class="btn btn--ghost" id="cfCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary" id="cfOk">Aceptar</button>
+    </footer>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="bg-network.js"></script>
+<script>AXBackground(document.getElementById('loginCanvas'), { colors: ['#60a5fa', '#22c1a1'] });</script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
