@@ -279,7 +279,7 @@ async function updateClient(req, id, user, db) {
   if (cur.owner !== owner) log.push({ t, by: user.id, type: 'estado', text: `Reasignado a ${await nameOf(db, owner)}` });
   // wonAt = momento en que el cliente pasó a «ganado» (para el ranking del mes)
   const wonAt = f.status === 'ganado' ? (cur.status === 'ganado' ? cur.wonAt || cur.updatedAt : t) : '';
-  const c = { ...cur, ...f, owner, wonAt, updatedAt: t, log: log.slice(-200) };
+  const c = { ...cur, ...f, owner, wonAt, updatedAt: t, webNew: false, log: log.slice(-200) };
   await db.setJSON('c/' + id, c);
   return json(c);
 }
@@ -975,15 +975,17 @@ async function publicLead(req, db) {
   const rep = b.rep === 'admin' ? 'admin' : (isId(b.rep) && (await db.get('u/' + b.rep, { type: 'json' }))?.role === 'comercial' ? b.rep : '');
   if (!rep) throw new HttpError(400, 'Responsable no válido.');
   const t = now();
-  let f, logText;
+  let f, extra, logText;
   if (b.mode === 'request') {
-    // Solicitud de contacto desde el formulario de la web: el cliente deja sus datos y el comercial le llama
-    const business = str(b.business, 120), msg = str(b.message, 600);
+    // Solicitud desde el formulario del asistente: ficha nueva, con aviso para quien la lleva
+    const name = str(b.name, 80), msg = str(b.message, 600);
+    if (name.length < 2) throw new HttpError(400, 'Falta el nombre.');
     f = cleanFields({
-      business: business || str(b.name, 120), contact: str(b.name, 80), phone: str(b.phone, 30), email: str(b.email, 120),
+      business: str(b.business, 120) || name, contact: name, phone: str(b.phone, 30), email: str(b.email, 120),
       status: 'nuevo',
-      notes: `Solicitud de cita desde la web. Quiere que le contactes.${msg ? '\nMensaje del cliente: ' + msg : ''}`
+      notes: msg ? `Mensaje del cliente desde la web: ${msg}` : 'Solicitud de cita desde la web (sin mensaje).'
     });
+    extra = { source: 'web', webNew: true };
     logText = 'Solicitud de cita recibida desde la web';
   } else {
     const when = Date.parse(b.when);
@@ -992,20 +994,13 @@ async function publicLead(req, db) {
       status: 'reunion', next: isNaN(when) ? '' : dayOf(new Date(when).toISOString()),
       notes: `Cita agendada desde la web: ${str(b.label, 80)}.${b.meet ? ' Meet: ' + str(b.meet, 120) : ''}`
     });
+    extra = { source: 'web', webNew: true };
     logText = 'Lead creado desde la web (cita agendada)';
   }
-  // webLead + leadSeen:false → el comercial ve el aviso «nuevo cliente interesado» hasta que abre la ficha
-  const c = { id: 'c' + randomUUID().replace(/-/g, '').slice(0, 16), ...f, owner: rep, wonAt: '', createdAt: t, updatedAt: t,
-    webLead: true, leadSeen: false, log: [{ t, by: 'web', type: 'estado', text: logText }] };
+  const c = { id: 'c' + randomUUID().replace(/-/g, '').slice(0, 16), ...f, ...extra, owner: rep, wonAt: '', createdAt: t, updatedAt: t,
+    log: [{ t, by: 'web', type: 'estado', text: logText }] };
   await db.setJSON('c/' + c.id, c);
   return json({ ok: true, id: c.id }, 201);
-}
-
-/* El comercial (o el admin) abre la ficha de un lead de la web: se apaga el aviso. No toca updatedAt. */
-async function markLeadSeen(id, user, db) {
-  const cur = await getClient(db, id, user);
-  if (cur.webLead && !cur.leadSeen) await db.setJSON('c/' + id, { ...cur, leadSeen: true });
-  return json({ ok: true });
 }
 
 export default async (req, ctx) => {
@@ -1086,10 +1081,14 @@ export default async (req, ctx) => {
         await Promise.all(blobs.map(b => db.delete(b.key)));
         return json({ ok: true, deleted: blobs.length });
       }
+      if (id && sub === 'seen' && m === 'POST') {
+        const cur = await getClient(db, id, user);
+        if (cur.webNew) { cur.webNew = false; await db.setJSON('c/' + id, cur); }
+        return json({ ok: true });
+      }
       if (id && !sub && m === 'PUT') return await updateClient(req, id, user, db);
       if (id && !sub && m === 'DELETE') { await getClient(db, id, user); await db.delete('c/' + id); return json({ ok: true }); }
       if (id && sub === 'notes' && m === 'POST') return await addNote(req, id, user, db);
-      if (id && sub === 'seen' && m === 'POST') return await markLeadSeen(id, user, db);
     }
 
     if (res === 'pay') {
