@@ -142,6 +142,7 @@ async function deleteUser(db, id) {
   await db.delete('idx/users');
   await db.delete('r/' + id);
   await db.delete('ben/' + id);
+  await db.delete('tp/' + id);
   // su conversación privada con administración desaparece con él
   const { blobs: dm } = await db.list({ prefix: chanPrefix('dm.' + id) });
   await Promise.all(dm.map(b => db.delete(b.key)));
@@ -918,6 +919,74 @@ async function createPayout(req, db) {
   return json({ ok: true, payout: po }, 201);
 }
 
+/* ---------- Equipo en la web: perfil público y disponibilidad para citas ---------- */
+const keyOk = req => {
+  const k = (process.env.AGENDA_KEY || '').trim(), g = String(req.headers.get('x-agenda-key') || '');
+  return k.length >= 16 && g.length === k.length && timingSafeEqual(Buffer.from(g), Buffer.from(k));
+};
+const tpDefaults = (id, name) => ({ id, name: id === 'admin' ? '' : name, zone: '', bio: '', photo: '', email: '', show: false, days: [1, 2, 3, 4, 5], from: '17:00', to: '19:00' });
+const getTp = async (db, id, name) => ({ ...tpDefaults(id, name), ...((await db.get('tp/' + id, { type: 'json' })) || {}), id });
+const teamPeople = async db => [{ id: 'admin', name: '' }, ...(await listUsers(db)).filter(u => u.role === 'comercial')];
+
+async function teamList(db) {
+  return Promise.all((await teamPeople(db)).map(async p => ({ ...(await getTp(db, p.id, p.name)), userName: p.name || 'Tú (administración)' })));
+}
+async function teamSave(req, id, db) {
+  const known = (await teamPeople(db)).find(p => p.id === id);
+  if (!known) throw new HttpError(404, 'Persona no encontrada.');
+  const b = await readBody(req), cur = await getTp(db, id, known.name);
+  const days = [...new Set((Array.isArray(b.days) ? b.days : []).map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))].sort();
+  const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const from = String(b.from || ''), to = String(b.to || '');
+  if (!hhmm.test(from) || !hhmm.test(to) || from >= to) throw new HttpError(400, 'Revisa el horario: la hora de inicio debe ser anterior a la de fin.');
+  if (b.show && !days.length) throw new HttpError(400, 'Marca al menos un día disponible.');
+  const email = str(b.email, 120);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'El email no parece válido.');
+  const name = str(b.name, 40);
+  if (b.show && (!name || !email)) throw new HttpError(400, 'Para mostrarlo en la web necesita nombre público y email (el email no se publica, solo se usa para avisarle de las citas).');
+  let photo = cur.photo;
+  if (b.photo === '') photo = '';
+  else if (typeof b.photo === 'string') {
+    if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(b.photo) || b.photo.length > 90000) throw new HttpError(400, 'La foto no es válida o pesa demasiado.');
+    photo = b.photo;
+  }
+  const tp = { id, name, zone: str(b.zone, 60), bio: str(b.bio, 160), photo, email, show: !!b.show, days, from, to };
+  await db.setJSON('tp/' + id, tp);
+  return json({ ...tp, userName: known.name || 'Tú (administración)' });
+}
+
+/* Público: quién sale en la web. Con la clave de la agenda (llamada servidor a servidor) incluye también el email. */
+async function publicTeam(req, db) {
+  const withEmail = keyOk(req), out = [];
+  for (const p of await teamPeople(db)) {
+    const t = await getTp(db, p.id, p.name);
+    if (!t.show || !t.name) continue;
+    const pubT = { id: t.id, name: t.name, zone: t.zone, bio: t.bio, photo: t.photo, days: t.days, from: t.from, to: t.to };
+    if (withEmail) pubT.email = t.email;
+    out.push(pubT);
+  }
+  return new Response(JSON.stringify(out), { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': withEmail ? 'no-store' : 'public, max-age=60' } });
+}
+
+/* Servidor a servidor: una cita agendada en la web crea el lead asignado a esa persona */
+async function publicLead(req, db) {
+  if (!keyOk(req)) throw new HttpError(401, 'No autorizado.');
+  const b = await readBody(req);
+  const rep = b.rep === 'admin' ? 'admin' : (isId(b.rep) && (await db.get('u/' + b.rep, { type: 'json' }))?.role === 'comercial' ? b.rep : '');
+  if (!rep) throw new HttpError(400, 'Responsable no válido.');
+  const when = Date.parse(b.when);
+  const f = cleanFields({
+    business: str(b.name, 120), contact: str(b.name, 80), phone: str(b.phone, 30), email: str(b.email, 120),
+    status: 'reunion', next: isNaN(when) ? '' : dayOf(new Date(when).toISOString()),
+    notes: `Cita agendada desde la web: ${str(b.label, 80)}.${b.meet ? ' Meet: ' + str(b.meet, 120) : ''}`
+  });
+  const t = now();
+  const c = { id: 'c' + randomUUID().replace(/-/g, '').slice(0, 16), ...f, owner: rep, wonAt: '', createdAt: t, updatedAt: t,
+    log: [{ t, by: 'web', type: 'estado', text: 'Lead creado desde la web (cita agendada)' }] };
+  await db.setJSON('c/' + c.id, c);
+  return json({ ok: true, id: c.id }, 201);
+}
+
 export default async (req, ctx) => {
   try {
     const db = getStore({ name: 'crm', consistency: 'strong' });
@@ -925,6 +994,12 @@ export default async (req, ctx) => {
     const m = req.method;
 
     if (res === 'login' && m === 'POST') return await login(req, ctx, db);
+
+    if (res === 'public') {
+      if (id === 'team' && m === 'GET') return await publicTeam(req, db);
+      if (id === 'lead' && m === 'POST') return await publicLead(req, db);
+      throw new HttpError(404, 'Ruta no encontrada.');
+    }
 
     const user = await authenticate(req, db);
     const admin = isAdmin(user);
@@ -1004,6 +1079,12 @@ export default async (req, ctx) => {
       }
       if (id === 'benefits' && !sub && m === 'PUT') { needAdmin(); return await setBenefit(req, db); }
       if (id === 'payouts' && !sub && m === 'POST') { needAdmin(); return await createPayout(req, db); }
+    }
+
+    if (res === 'team') {
+      needAdmin();
+      if (!id && m === 'GET') return json(await teamList(db));
+      if (id && !sub && m === 'PUT') return await teamSave(req, id, db);
     }
 
     if (res === 'expenses') {
