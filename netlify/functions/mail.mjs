@@ -2,9 +2,10 @@
    Avisos por correo (usado por api.mjs y avisos.mjs)
    ------------------------------------------------------------
    Variables de entorno en Netlify:
-     RESEND_API_KEY  (obligatoria para enviar) clave de https://resend.com
-     MAIL_FROM       (obligatoria) remitente verificado en Resend,
-                     p. ej.  AppXpand <avisos@tudominio.es>
+     BREVO_API_KEY   clave de https://brevo.com (no necesita dominio propio)
+       o RESEND_API_KEY (necesita dominio verificado)
+     MAIL_FROM       (obligatoria) remitente verificado en el proveedor,
+                     p. ej.  AppXpand <tucorreo@gmail.com>
      SITE_URL        (opcional) enlace a la plataforma; por defecto la URL de Netlify
    Si falta alguna, los avisos se omiten sin romper nada.
    ============================================================ */
@@ -12,15 +13,31 @@
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const siteUrl = () => (process.env.SITE_URL || process.env.URL || '').replace(/\/$/, '');
 
+/* Proveedor: Brevo (BREVO_API_KEY, no exige dominio propio) o Resend (RESEND_API_KEY, exige dominio verificado) */
+function parseFrom(from) {
+  const m = /^(.*)<([^>]+)>\s*$/.exec(from);
+  return m ? { name: m[1].trim().replace(/^"|"$/g, ''), email: m[2].trim() } : { name: '', email: from.trim() };
+}
 export async function sendMail({ to, subject, html }) {
-  const key = (process.env.RESEND_API_KEY || '').trim(), from = (process.env.MAIL_FROM || '').trim();
-  if (!key || !from || !to) return false;
+  const brevo = (process.env.BREVO_API_KEY || '').trim(), resend = (process.env.RESEND_API_KEY || '').trim();
+  const from = (process.env.MAIL_FROM || '').trim();
+  if ((!brevo && !resend) || !from || !to) return false;
   try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to: [to], subject, html })
-    });
+    let res;
+    if (brevo) {
+      const sender = parseFrom(from);
+      res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': brevo, 'Content-Type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ sender: sender.name ? sender : { email: sender.email }, to: [{ email: to }], subject, htmlContent: html })
+      });
+    } else {
+      res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + resend, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: [to], subject, html })
+      });
+    }
     if (!res.ok) { console.error('Aviso por correo rechazado', res.status, (await res.text()).slice(0, 300)); return false; }
     return true;
   } catch (e) { console.error('Aviso por correo fallido', e); return false; }
