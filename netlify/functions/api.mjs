@@ -10,6 +10,7 @@
 import { getStore } from '@netlify/blobs';
 import { createHash, createHmac, timingSafeEqual, randomInt, randomUUID, randomBytes, scryptSync } from 'node:crypto';
 import { KB_SEED, KB_PATCHES } from './kb-seed.mjs';
+import { mailNewLead } from './mail.mjs';
 
 export const config = { path: '/api/*' };
 
@@ -1090,7 +1091,7 @@ async function publicTeam(req, db) {
 
 /* Servidor a servidor: una cita agendada en la web crea el lead asignado a esa persona */
 /* ---------- Perfil personal: foto, cumpleaños, teléfono y frase (los rellena cada persona) ---------- */
-const PF_EMPTY = { photo: '', birthday: '', phone: '', bio: '' };
+const PF_EMPTY = { photo: '', birthday: '', phone: '', bio: '', email: '', notify: true };
 const getPf = async (db, id) => ({ ...PF_EMPTY, ...((await db.get('pf/' + id, { type: 'json' })) || {}) });
 const validBirthday = s => {
   const m = /^(\d{2})-(\d{2})$/.exec(s);
@@ -1108,7 +1109,9 @@ async function saveProfile(req, user, db) {
   }
   const birthday = str(b.birthday, 5);
   if (birthday && !validBirthday(birthday)) throw new HttpError(400, 'La fecha de cumpleaños no es válida.');
-  const pf = { photo, birthday, phone: str(b.phone, 30), bio: str(b.bio, 200), updatedAt: now() };
+  const email = str(b.email, 120);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'El correo no parece válido.');
+  const pf = { photo, birthday, phone: str(b.phone, 30), bio: str(b.bio, 200), email, notify: b.notify !== false, updatedAt: now() };
   await db.setJSON('pf/' + user.id, pf);
   return json(pf);
 }
@@ -1148,6 +1151,8 @@ async function publicLead(req, db) {
   const c = { id: 'c' + randomUUID().replace(/-/g, '').slice(0, 16), ...f, ...extra, owner: rep, wonAt: '', createdAt: t, updatedAt: t,
     log: [{ t, by: 'web', type: 'estado', text: logText }] };
   await db.setJSON('c/' + c.id, c);
+  // aviso por correo al responsable; si falla no debe impedir que el cliente quede registrado
+  await mailNewLead(db, rep, c).catch(e => console.error('Aviso de cliente nuevo fallido', e));
   return json({ ok: true, id: c.id }, 201);
 }
 
