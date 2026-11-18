@@ -2011,6 +2011,7 @@
     $('#pfFile').value = '';
     $('#pfMonth').value = m ? String(+m[1]) : ''; $('#pfDay').value = m ? String(+m[2]) : '';
     $('#pfPhone').value = p.phone || ''; $('#pfBio').value = p.bio || '';
+    $('#pfEmail').value = p.email || ''; $('#pfNotify').checked = p.notify !== false;
     $('#pfError').hidden = true;
     paintPwBox();
     pdlg().showModal();
@@ -2050,7 +2051,7 @@
     const err = $('#pfError'), d = $('#pfDay').value, mo = $('#pfMonth').value;
     try {
       if (!!d !== !!mo) throw new Error('Elige el día y el mes del cumpleaños, o deja los dos vacíos.');
-      const body = { birthday: d ? String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0') : '', phone: $('#pfPhone').value.trim(), bio: $('#pfBio').value.trim() };
+      const body = { birthday: d ? String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0') : '', phone: $('#pfPhone').value.trim(), bio: $('#pfBio').value.trim(), email: $('#pfEmail').value.trim(), notify: $('#pfNotify').checked };
       if (state.pfPhoto !== undefined) body.photo = state.pfPhoto;
       state.profile = await api('PUT', 'profile', body);
       state.profiles = null;
