@@ -646,9 +646,9 @@ function chatKey(from) {
 /* Conversaciones a las que tiene acceso este usuario */
 async function chatChannels(user, db) {
   const general = { id: 'general', name: 'General', kind: 'general' };
-  if (!isAdmin(user)) return [general, { id: 'dm.' + user.id, name: 'Administración', kind: 'dm' }];
+  if (!isAdmin(user)) return [general, { id: 'dm.' + user.id, name: 'Administración', kind: 'dm', uid: ADMIN.id }];
   const reps = (await listUsers(db)).filter(u => u.role === 'comercial');
-  return [general, ...reps.map(u => ({ id: 'dm.' + u.id, name: u.name, kind: 'dm' }))];
+  return [general, ...reps.map(u => ({ id: 'dm.' + u.id, name: u.name, kind: 'dm', uid: u.id }))];
 }
 async function chatChannel(user, db, id) {
   const ch = (await chatChannels(user, db)).find(c => c.id === id);
@@ -685,7 +685,7 @@ async function chatPoll(user, db, url) {
     const rd = reads[c.id] || '';
     const unread = keys.filter(k => k > rd && keySender(k) !== user.id && keySender(k) !== '_del').length;
     const last = [...keys].reverse().find(k => keySender(k) !== '_del');
-    return { id: c.id, name: c.name, kind: c.kind, unread, lastTs: last ? keyTs(last) : 0 };
+    return { id: c.id, name: c.name, kind: c.kind, uid: c.uid || '', unread, lastTs: last ? keyTs(last) : 0 };
   });
   if (dirty) await db.setJSON('r/' + user.id, reads);
 
@@ -1115,6 +1115,12 @@ async function saveProfile(req, user, db) {
   await db.setJSON('pf/' + user.id, pf);
   return json(pf);
 }
+/* Fotos de perfil de todo el equipo (solo id → foto). Las ve cualquier usuario con sesión: se pintan en el chat y en el equipo. */
+async function allAvatars(db) {
+  const people = [ADMIN, ...(await listUsers(db))], out = {};
+  await Promise.all(people.map(async u => { const p = await getPf(db, u.id); if (p.photo) out[u.id] = p.photo; }));
+  return out;
+}
 async function allProfiles(db) {
   const people = [ADMIN, ...(await listUsers(db))];
   return Promise.all(people.map(async u => ({ id: u.id, name: u.name, role: u.role, ...(await getPf(db, u.id)) })));
@@ -1204,6 +1210,7 @@ export default async (req, ctx) => {
       if (m === 'PUT') return await saveProfile(req, user, db);
     }
     if (res === 'profiles' && !id && m === 'GET') { needAdmin(); return json(await allProfiles(db)); }
+    if (res === 'avatars' && !id && m === 'GET') return json(await allAvatars(db));
 
     if (res === 'news') {
       if (!id && m === 'POST') { needAdmin(); return await createPost(req, user, db); }
