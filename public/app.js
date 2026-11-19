@@ -61,7 +61,7 @@
     newsFilter: '',
     newsSeen: '',
     newsMarks: new Set(),
-    team: null, teamId: '', teamPhoto: undefined,
+    team: null, teamId: '', teamPhoto: undefined, avatars: {}, avatarsAt: 0,
     pay: null, payAt: 0, payTab: 'resumen', payPending: 0, payOpen: new Set(), decId: '',
     chat: freshChat()
   };
@@ -79,6 +79,8 @@
   const fmtDT = iso => new Date(iso).toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   const money = n => Number(n || 0).toLocaleString('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
   const initials = n => String(n || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  /* Foto de perfil que cada persona se pone (no la pública de la web); si no tiene, sus iniciales */
+  const avInner = (id, name) => (state.avatars && state.avatars[id]) ? `<img src="${esc(state.avatars[id])}" alt="">` : esc(initials(name));
   const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const userById = id => state.users.find(u => u.id === id);
   const ownerName = id => (userById(id) || {}).name || 'Sin asignar';
@@ -307,7 +309,7 @@
     $('#userRole').textContent = isAdmin() ? 'Administrador' : 'Comercial';
     $('#userAvatar').textContent = initials(state.user.name);
     if (!isAdmin()) api('POST', 'visit', undefined, true).catch(() => { /* el registro de accesos nunca debe molestar */ });
-    state.profile = null; state.profiles = null; loadMyProfile();
+    state.profile = null; state.profiles = null; state.avatars = {}; state.avatarsAt = 0; loadMyProfile(); loadAvatars();
     $$('[data-admin]').forEach(el => { el.hidden = !isAdmin(); });
     $('#fOwnerWrap').hidden = !isAdmin();
     $('#resumenOwnerWrap').hidden = !isAdmin();
@@ -410,7 +412,7 @@
     else if (state.view === 'kb') renderKb();
     else if (state.view === 'chat') renderChat();
     else if (state.view === 'pay') renderPay();
-    else { renderEquipo(); renderVisits(); renderTeamWeb(); renderTeamProfiles(); }
+    else { renderEquipo(); renderVisits(); renderTeamWeb(); renderTeamProfiles(); loadAvatars(); }
     updateNewsBadge();
     updatePayBadge();
     updateLeadAlerts();
@@ -705,6 +707,7 @@
       ? 'Canal general del equipo y conversación privada con cada comercial.'
       : 'Canal general del equipo y conversación privada con administración.';
     pollChat();
+    loadAvatars();
   }
 
   function openChannel(id) {
@@ -720,7 +723,7 @@
     $('#chat').classList.toggle('is-thread', !!c.open);
     $('#chatList').innerHTML = c.channels.length
       ? c.channels.map(ch => `<button type="button" class="chat-item${ch.id === c.open ? ' is-active' : ''}" data-chan="${esc(ch.id)}">
-          <span class="avatar chat-av">${ch.kind === 'general' ? '#' : esc(initials(ch.name))}</span>
+          <span class="avatar chat-av">${ch.kind === 'general' ? '#' : avInner(ch.uid, ch.name)}</span>
           <span class="chat-item__txt"><strong>${esc(ch.name)}</strong><small>${ch.kind === 'general' ? 'Todo el equipo' : 'Privado'}${ch.lastTs ? ' · ' + chatWhen(ch.lastTs) : ''}</small></span>
           ${ch.unread && ch.id !== c.open ? `<span class="tab-badge">${ch.unread}</span>` : ''}</button>`).join('')
       : '<p class="empty">Cargando conversaciones…</p>';
@@ -753,7 +756,7 @@
       const cont = sameDay && prev.from === m.from && m.ts - prev.ts < 5 * 60e3;
       const canDel = mine || isAdmin();
       html += `<div class="msg${mine ? ' msg--me' : ''}${cont ? ' msg--cont' : ''}">
-        ${!mine && !cont ? `<span class="msg__name">${esc(m.fromName)}${m.fromRole === 'admin' ? ' <em>Admin</em>' : ''}</span>` : ''}
+        ${!mine && !cont ? `<span class="msg__name"><span class="avatar msg-av">${avInner(m.from, m.fromName)}</span>${esc(m.fromName)}${m.fromRole === 'admin' ? ' <em>Admin</em>' : ''}</span>` : ''}
         <div class="msg__text">${chatText(m.text)}</div>
         <span class="msg__meta"><time>${chatHM(m.ts)}</time>${canDel ? `<button type="button" class="msg__del" data-del="${esc(m.id)}" aria-label="Borrar mensaje">✕</button>` : ''}</span>
       </div>`;
@@ -1293,7 +1296,7 @@
            <button class="btn btn--danger-ghost btn--sm" type="button" data-deluser="${esc(u.id)}">Dar de baja</button>`
         : '';
       return `<tr>
-        <td class="t-name"><div class="t-who"><span class="avatar">${esc(initials(u.name))}</span><div><strong>${esc(u.name)}</strong><small>${u.role === 'admin' ? 'Administrador' : 'Comercial'}</small></div></div></td>
+        <td class="t-name"><div class="t-who"><span class="avatar">${avInner(u.id, u.name)}</span><div><strong>${esc(u.name)}</strong><small>${u.role === 'admin' ? 'Administrador' : 'Comercial'}</small></div></div></td>
         <td data-label="Clientes">${s.total}</td>
         <td data-label="En curso">${s.open}</td>
         <td data-label="Ganados">${s.won}</td>
@@ -1418,7 +1421,7 @@
         return `<span class="vbar${n ? ' has' : ''}${d === V.today ? ' today' : ''}" title="${esc(lab)}: ${plural(n, 'entrada', 'entradas')}"><i style="height:${n ? Math.max(18, Math.round(n / max * 100)) : 10}%"></i></span>`;
       }).join('');
       return `<tr>
-        <td class="t-name"><div class="t-who"><span class="avatar">${esc(initials(u.name))}</span><div><strong>${esc(u.name)}</strong><small>${u.role === 'admin' ? 'Administrador' : 'Comercial'}</small></div></div></td>
+        <td class="t-name"><div class="t-who"><span class="avatar">${avInner(u.id, u.name)}</span><div><strong>${esc(u.name)}</strong><small>${u.role === 'admin' ? 'Administrador' : 'Comercial'}</small></div></div></td>
         <td data-label="Hoy" class="vis-today">${t ? `<strong>${plural(t.n, 'entrada', 'entradas')}</strong><small class="muted">${esc((t.times || []).map(hh).join(' · '))}</small>` : '<span class="muted">No ha entrado hoy</span>'}</td>
         <td data-label="Último acceso">${last ? esc(fmtDT(last)) : '—'}</td>
         <td data-label="Periodo"><span class="vbars" role="img" aria-label="Entradas por día">${bars}</span></td>
@@ -1999,6 +2002,13 @@
     if (state.profile && state.profile.photo) a.innerHTML = `<img src="${esc(state.profile.photo)}" alt="">`;
     else a.textContent = initials(state.user.name);
   }
+  async function loadAvatars(force) {
+    if (!force && Date.now() - state.avatarsAt < 30e3) return;
+    state.avatarsAt = Date.now();
+    try { state.avatars = await api('GET', 'avatars', undefined, true); } catch (e) { return; }
+    if (state.view === 'chat') { state.chat.sig = ''; renderChat(); }
+    else if (state.view === 'equipo') { renderEquipo(); renderVisits(); }
+  }
   async function loadMyProfile() {
     try { state.profile = await api('GET', 'profile', undefined, true); paintAvatar(); } catch (e) { /* sin foto */ }
   }
@@ -2055,8 +2065,10 @@
       if (state.pfPhoto !== undefined) body.photo = state.pfPhoto;
       state.profile = await api('PUT', 'profile', body);
       state.profiles = null;
+      if (state.profile.photo) state.avatars[state.user.id] = state.profile.photo; else delete state.avatars[state.user.id];
       paintAvatar(); pdlg().close(); toast('Perfil guardado');
-      if (state.view === 'equipo') renderTeamProfiles();
+      if (state.view === 'chat') { state.chat.sig = ''; renderChat(); }
+      if (state.view === 'equipo') { renderEquipo(); renderVisits(); renderTeamProfiles(); }
     } catch (x) { err.textContent = x.message; err.hidden = false; }
   }
   async function loadProfiles() {
