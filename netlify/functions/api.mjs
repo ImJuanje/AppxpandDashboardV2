@@ -471,7 +471,7 @@ function cleanPost(b) {
 async function createPost(req, user, db) {
   const f = cleanPost(await readBody(req));
   const t = now();
-  const p = { id: 'n' + randomUUID().replace(/-/g, '').slice(0, 16), ...f, author: user.id, authorName: user.name, createdAt: t, updatedAt: t };
+  const p = { id: 'n' + randomUUID().replace(/-/g, '').slice(0, 16), ...f, author: user.id, authorName: user.name, docs: [], createdAt: t, updatedAt: t };
   await db.setJSON('n/' + p.id, p);
   return json(p, 201);
 }
@@ -483,6 +483,128 @@ async function updatePost(req, id, db) {
   const p = { ...cur, ...cleanPost(await readBody(req)), updatedAt: now() };
   await db.setJSON('n/' + id, p);
   return json(p);
+}
+
+/* ---------- Documentos: adjuntos de AppXnews y galería del Centro comercial ----------
+   Los archivos se guardan tal cual en Netlify Blobs («nf/<id>» los de las publicaciones, «df/<id>» los de la galería).
+   Su ficha (nombre, tipo, tamaño…) va aparte: dentro de la publicación (post.docs) o en «d/<id>». Así /api/sync
+   solo lleva fichas, nunca los bytes. Se suben en base64 dentro de un JSON (igual que los justificantes de gastos);
+   Netlify limita cada petición a 6 MB, de ahí el tope de 4 MB por archivo. Solo el admin sube, edita y borra. */
+const DOC_EXT = {
+  pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+  doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain; charset=utf-8', csv: 'text/csv; charset=utf-8'
+};
+const DOC_INLINE = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);   // se abren en el navegador; el resto se descarga
+const DOC_CATS = ['catalogo', 'empresa', 'comercial', 'otros'];
+const MAX_DOC_BYTES = 4_000_000, MAX_DOC_B64 = 5_400_000, MAX_POST_FILES = 5, MAX_DOCS = 80;
+
+const startsWith = (buf, ...bytes) => bytes.every((x, i) => buf[i] === x);
+function magicOk(ext, b) {   // el contenido tiene que ser del formato que dice la extensión
+  if (ext === 'pdf') return b.subarray(0, 5).toString('latin1') === '%PDF-';
+  if (ext === 'jpg' || ext === 'jpeg') return startsWith(b, 0xff, 0xd8, 0xff);
+  if (ext === 'png') return startsWith(b, 0x89, 0x50, 0x4e, 0x47);
+  if (ext === 'webp') return b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP';
+  if (ext === 'docx' || ext === 'xlsx' || ext === 'pptx') return startsWith(b, 0x50, 0x4b, 0x03, 0x04);
+  if (ext === 'doc' || ext === 'xls' || ext === 'ppt') return startsWith(b, 0xd0, 0xcf, 0x11, 0xe0);
+  return !b.subarray(0, 2000).includes(0);   // txt y csv: texto plano
+}
+function cleanUpload(f) {
+  if (!f || typeof f.data !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(f.data)) throw new HttpError(400, 'Adjunta un archivo.');
+  if (f.data.length > MAX_DOC_B64) throw new HttpError(413, 'El archivo pesa demasiado (máx. 4 MB).');
+  const name = str(f.name, 100).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_') || 'documento';
+  const ext = (/\.([A-Za-z0-9]{2,5})$/.exec(name) || [])[1]?.toLowerCase() || '';
+  const type = DOC_EXT[ext];
+  if (!type) throw new HttpError(400, 'Formato no admitido. Sube un PDF, Word, Excel, PowerPoint, una imagen (JPG, PNG, WebP) o un TXT/CSV.');
+  const buf = Buffer.from(f.data, 'base64');
+  if (!buf.length) throw new HttpError(400, 'El archivo está vacío.');
+  if (buf.length > MAX_DOC_BYTES) throw new HttpError(413, 'El archivo pesa demasiado (máx. 4 MB).');
+  if (!magicOk(ext, buf)) throw new HttpError(400, 'El contenido no coincide con el formato del archivo. ¿Está dañado o renombrado?');
+  return { name, type, size: buf.length, buf };
+}
+const toAB = buf => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+async function sendFile(db, key, meta) {
+  const ab = await db.get(key, { type: 'arrayBuffer' });
+  if (!ab) throw new HttpError(404, 'Archivo no encontrado.');
+  return new Response(ab, {
+    headers: {
+      'Content-Type': meta.type, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
+      'Content-Disposition': `${DOC_INLINE.has(meta.type) ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(meta.name)}`
+    }
+  });
+}
+
+/* Adjuntos de una publicación */
+async function getPostOr404(db, id) {
+  const p = isId(id) ? await db.get('n/' + id, { type: 'json' }) : null;
+  if (!p) throw new HttpError(404, 'Publicación no encontrada.');
+  return p;
+}
+async function addPostFile(req, id, db) {
+  const cur = await getPostOr404(db, id), docs = cur.docs || [];
+  if (docs.length >= MAX_POST_FILES) throw new HttpError(400, `Máximo ${MAX_POST_FILES} documentos por publicación.`);
+  const up = cleanUpload((await readBody(req)).file);
+  const fid = 'f' + randomUUID().replace(/-/g, '').slice(0, 16);
+  await db.set('nf/' + fid, toAB(up.buf));
+  const p = { ...cur, docs: [...docs, { id: fid, name: up.name, type: up.type, size: up.size }] };   // no toca updatedAt: no cuenta como «editado»
+  await db.setJSON('n/' + id, p);
+  return json(p, 201);
+}
+async function removePostFile(id, fid, db) {
+  const cur = await getPostOr404(db, id), docs = cur.docs || [];
+  if (!isId(fid) || !docs.some(d => d.id === fid)) throw new HttpError(404, 'Documento no encontrado.');
+  const p = { ...cur, docs: docs.filter(d => d.id !== fid) };
+  await db.setJSON('n/' + id, p);
+  await db.delete('nf/' + fid);
+  return json(p);
+}
+async function postFile(id, fid, db) {
+  const meta = ((await getPostOr404(db, id)).docs || []).find(d => d.id === fid);
+  if (!meta) throw new HttpError(404, 'Documento no encontrado.');
+  return sendFile(db, 'nf/' + fid, meta);
+}
+
+/* Galería del Centro comercial */
+async function allDocs(db) {
+  const { blobs } = await db.list({ prefix: 'd/' });
+  const list = (await Promise.all(blobs.map(b => db.get(b.key, { type: 'json' })))).filter(Boolean);
+  return list.sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt))).slice(0, MAX_DOCS);
+}
+function cleanDocMeta(b) {
+  const title = str(b.title, 120);
+  if (!title) throw new HttpError(400, 'Escribe un título.');
+  return { title, description: str(b.description, 400), category: DOC_CATS.includes(b.category) ? b.category : 'otros' };
+}
+async function createDoc(req, user, db) {
+  const b = await readBody(req), f = cleanDocMeta(b), up = cleanUpload(b.file);
+  if ((await allDocs(db)).length >= MAX_DOCS) throw new HttpError(400, `Has llegado al máximo de ${MAX_DOCS} documentos. Elimina alguno antes de subir otro.`);
+  const id = 'd' + randomUUID().replace(/-/g, '').slice(0, 16), t = now();
+  await db.set('df/' + id, toAB(up.buf));
+  const d = { id, ...f, name: up.name, type: up.type, size: up.size, uploadedBy: user.name, uploadedAt: t, updatedAt: t };
+  await db.setJSON('d/' + id, d);
+  return json(d, 201);
+}
+async function updateDoc(req, id, db) {
+  const cur = isId(id) ? await db.get('d/' + id, { type: 'json' }) : null;
+  if (!cur) throw new HttpError(404, 'Documento no encontrado.');
+  const b = await readBody(req), f = cleanDocMeta(b);
+  let file = {};
+  if (b.file) {   // reemplazar el archivo (opcional)
+    const up = cleanUpload(b.file);
+    await db.set('df/' + id, toAB(up.buf));
+    file = { name: up.name, type: up.type, size: up.size };
+  }
+  const d = { ...cur, ...f, ...file, updatedAt: now() };
+  await db.setJSON('d/' + id, d);
+  return json(d);
+}
+async function deleteDoc(id, db) {
+  if (!isId(id) || !(await db.get('d/' + id, { type: 'json' }))) throw new HttpError(404, 'Documento no encontrado.');
+  await db.delete('d/' + id);
+  await db.delete('df/' + id);
+  return json({ ok: true });
 }
 
 /* ---------- Centro de conocimiento (objeciones, FAQ, precios, descuentos…) ----------
@@ -1165,7 +1287,7 @@ async function publicLead(req, db) {
 export default async (req, ctx) => {
   try {
     const db = getStore({ name: 'crm', consistency: 'strong' });
-    const [res, id, sub] = new URL(req.url).pathname.replace(/^\/api\/?/, '').split('/').filter(Boolean);
+    const [res, id, sub, sub2] = new URL(req.url).pathname.replace(/^\/api\/?/, '').split('/').filter(Boolean);
     const m = req.method;
 
     if (res === 'login' && m === 'POST') return await login(req, ctx, db);
@@ -1183,11 +1305,12 @@ export default async (req, ctx) => {
     if (res === 'sync' && m === 'GET') {
       const settings = await getSettings(db);
       const wantRanking = admin || settings.showRanking;
-      const [users, clients, posts, kb] = await Promise.all([
+      const [users, clients, posts, kb, docs] = await Promise.all([
         wantRanking ? listUsers(db) : [],
         allClients(db),
         allPosts(db),
-        loadKb(db)
+        loadKb(db),
+        allDocs(db)
       ]);
       return json({
         user,
@@ -1195,6 +1318,7 @@ export default async (req, ctx) => {
         clients: admin ? clients : clients.filter(c => c.owner === user.id),
         posts,
         kb,
+        docs,
         settings,
         ranking: wantRanking ? buildRanking(clients, users, admin) : null,
         payPending: admin ? (await pendingIds(db)).length : 0
@@ -1217,10 +1341,27 @@ export default async (req, ctx) => {
       if (id && !sub && m === 'PUT') { needAdmin(); return await updatePost(req, id, db); }
       if (id && !sub && m === 'DELETE') {
         needAdmin();
-        if (!isId(id)) throw new HttpError(404, 'Publicación no encontrada.');
+        const cur = await getPostOr404(db, id);
+        await Promise.all((cur.docs || []).map(d => db.delete('nf/' + d.id)));
         await db.delete('n/' + id);
         return json({ ok: true });
       }
+      // adjuntos: los ve cualquier usuario; solo el admin los sube o quita
+      if (id && sub === 'files' && !sub2 && m === 'POST') { needAdmin(); return await addPostFile(req, id, db); }
+      if (id && sub === 'files' && sub2 && m === 'GET') return await postFile(id, sub2, db);
+      if (id && sub === 'files' && sub2 && m === 'DELETE') { needAdmin(); return await removePostFile(id, sub2, db); }
+    }
+
+    if (res === 'docs') {   // galería de documentos del Centro comercial
+      if (id && sub === 'file' && m === 'GET') {
+        const meta = isId(id) ? await db.get('d/' + id, { type: 'json' }) : null;
+        if (!meta) throw new HttpError(404, 'Documento no encontrado.');
+        return await sendFile(db, 'df/' + id, meta);
+      }
+      needAdmin();
+      if (!id && m === 'POST') return await createDoc(req, user, db);
+      if (id && !sub && m === 'PUT') return await updateDoc(req, id, db);
+      if (id && !sub && m === 'DELETE') return await deleteDoc(id, db);
     }
 
     if (res === 'kb') {
