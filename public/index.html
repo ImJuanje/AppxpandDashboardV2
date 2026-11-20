@@ -393,6 +393,11 @@
         <label class="span2">Contenido *
           <textarea id="pBody" rows="9" maxlength="5000" placeholder="Escribe aquí. Deja una línea en blanco para separar párrafos y empieza una línea con «- » para hacer listas. Los enlaces (https://…) se vuelven clicables."></textarea>
         </label>
+        <div class="span2 docs-field">
+          <span class="lbl">Documentos adjuntos <small class="muted">(PDF, Word, Excel, PowerPoint o imagen · máx. 4 MB cada uno · hasta 5)</small></span>
+          <ul id="pDocs" class="doc-edit-list"></ul>
+          <label class="btn btn--ghost btn--sm file-btn">+ Añadir documento<input id="pFile" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.webp,.txt,.csv" hidden></label>
+        </div>
       </div>
       <p id="newsError" class="error" role="alert" hidden></p>
     </div>
@@ -402,6 +407,44 @@
       <span class="spacer"></span>
       <button type="button" class="btn btn--ghost" id="newsCancel">Cancelar</button>
       <button type="submit" class="btn btn--primary">Publicar</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- ============ DIÁLOGO DOCUMENTO DE LA GALERÍA (admin) ============ -->
+<dialog id="docDialog" aria-labelledby="docDlgTitle">
+  <form id="docForm" novalidate>
+    <header class="dlg-head">
+      <div>
+        <h3 id="docDlgTitle">Subir documento</h3>
+        <small class="muted">Galería de documentos del Centro comercial</small>
+      </div>
+      <button type="button" class="icon-btn" id="docDlgClose" aria-label="Cerrar">✕</button>
+    </header>
+
+    <div class="dlg-body">
+      <div class="form-grid">
+        <label class="span2">Título *
+          <input id="dTitle" type="text" maxlength="120" required placeholder="Ej. Catálogo de servicios 2026">
+        </label>
+        <label class="span2">Categoría<select id="dCat"></select></label>
+        <label class="span2">Descripción <small class="muted">(opcional)</small>
+          <textarea id="dDesc" rows="3" maxlength="400" placeholder="Para qué sirve y cuándo usarlo con un cliente"></textarea>
+        </label>
+        <label class="span2">Archivo
+          <input id="dFile" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.webp,.txt,.csv">
+          <small class="muted" id="dCurrent"></small>
+        </label>
+        <p class="muted span2">PDF, Word, Excel, PowerPoint, imagen (JPG, PNG, WebP) o TXT/CSV · máximo 4 MB.</p>
+      </div>
+      <p id="docError" class="error" role="alert" hidden></p>
+    </div>
+
+    <footer class="dlg-foot">
+      <button type="button" class="btn btn--danger-ghost" id="docDelete" hidden>Eliminar</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn--ghost" id="docCancel">Cancelar</button>
+      <button type="submit" class="btn btn--primary">Guardar</button>
     </footer>
   </form>
 </dialog>

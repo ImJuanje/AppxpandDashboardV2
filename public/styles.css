@@ -723,3 +723,26 @@ dialog::backdrop { background: rgba(11, 27, 58, .55); backdrop-filter: blur(3px)
 .cf-foot { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; padding: 14px 24px calc(20px + env(safe-area-inset-bottom)); }
 .cf-foot .btn { min-width: 120px; }
 .cf-foot .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ============================================================
+   Documentos: adjuntos de AppXnews y galería del Centro comercial
+   ============================================================ */
+.post__docs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.doc-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; font: inherit; font-size: .88rem; font-weight: 600; color: var(--ink); cursor: pointer; background: var(--primary-soft); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; }
+.doc-chip:hover { border-color: var(--primary); }
+.doc-chip__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+.doc-chip small { color: var(--muted); font-weight: 500; white-space: nowrap; }
+.doc-grid { display: grid; gap: 12px; margin-bottom: 18px; }
+.doc-card { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; align-items: start; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
+.doc-card__icon { font-size: 1.9rem; line-height: 1; }
+.doc-card__main { min-width: 0; overflow-wrap: anywhere; }
+.doc-card__main h4 { margin: 0 0 4px; font-size: 1rem; }
+.doc-card__main p { margin: 0 0 6px; }
+.doc-card__act { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; }
+.docs-field .lbl { display: block; font-weight: 600; margin-bottom: 6px; }
+.doc-edit-list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 6px; }
+.doc-edit-list:empty { display: none; }
+.doc-edit-list li { display: flex; align-items: center; gap: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 10px; }
+.doc-edit-list li > span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.doc-edit-list li.is-new { border-style: dashed; }
+@media (min-width: 720px) { .doc-grid { grid-template-columns: repeat(2, 1fr); } }

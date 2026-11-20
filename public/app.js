@@ -53,6 +53,7 @@
     filters: { ...EMPTY_FILTERS },
     posts: [],
     kb: [],
+    docs: [],
     kbSection: '',
     kbQ: '',
     kbOpen: new Map(),
@@ -257,9 +258,10 @@
     if ($('#clientDialog').open) $('#clientDialog').close();
     if ($('#newsDialog').open) $('#newsDialog').close();
     if ($('#kbDialog').open) $('#kbDialog').close();
+    if ($('#docDialog').open) $('#docDialog').close();
     if ($('#profileDialog').open) $('#profileDialog').close();
     state.profile = null; state.profiles = null;
-    state.kb = []; state.kbSection = ''; state.kbQ = ''; state.kbOpen = new Map(); $('#kbQ').value = '';
+    state.docs = []; state.kb = []; state.kbSection = ''; state.kbQ = ''; state.kbOpen = new Map(); $('#kbQ').value = '';
     state.token = null; state.user = null; state.users = []; state.data = { clients: [] }; state.editingId = null;
     state.posts = []; state.ranking = null; state.newsMarks = new Set();
     clearTimeout(chatTimer); state.chat = freshChat(); document.title = BASE_TITLE;
@@ -281,6 +283,7 @@
     state.data.clients = d.clients || [];
     state.posts = d.posts || [];
     state.kb = d.kb || [];
+    state.docs = d.docs || [];
     state.ranking = d.ranking || null;
     state.settings = d.settings || { showRanking: true };
     state.payPending = d.payPending || 0;
@@ -924,6 +927,149 @@
       : 'Se calcula con los clientes que pasan a «Ganado» durante el mes.';
   }
 
+  /* ---------- Documentos: adjuntos de AppXnews y galería del Centro comercial ---------- */
+  const DOC_MAX = 4e6, POST_FILES_MAX = 5;
+  const DOC_EXT_OK = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'jpg', 'jpeg', 'png', 'webp', 'txt', 'csv']);
+  const DOC_CATS = [
+    { id: 'catalogo',  icon: '📘', label: 'Catálogos y tarifas' },
+    { id: 'empresa',   icon: '🏢', label: 'Empresa y valores' },
+    { id: 'comercial', icon: '📣', label: 'Material comercial' },
+    { id: 'otros',     icon: '📎', label: 'Otros documentos' }
+  ];
+  const docExt = n => ((/\.([a-z0-9]{2,5})$/i.exec(n || '') || [])[1] || '').toLowerCase();
+  const docIcon = n => ({ pdf: '📕', doc: '📝', docx: '📝', xls: '📊', xlsx: '📊', csv: '📊', ppt: '📽️', pptx: '📽️', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', webp: '🖼️', txt: '📄' }[docExt(n)] || '📎');
+  const fmtSize = b => b >= 1e6 ? (b / 1e6).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
+  const isInlineDoc = type => /^(application\/pdf|image\/)/.test(type);
+  function docCheck(file) {
+    if (!DOC_EXT_OK.has(docExt(file.name))) return `«${file.name}»: formato no admitido. Sube un PDF, Word, Excel, PowerPoint, imagen o TXT/CSV.`;
+    if (!file.size) return `«${file.name}» está vacío.`;
+    if (file.size > DOC_MAX) return `«${file.name}» pesa ${fmtSize(file.size)} y el máximo son 4 MB. Comprímelo antes de subirlo.`;
+    return '';
+  }
+  const uploadPayload = async file => ({ name: file.name, data: await blobB64(file) });
+  /* Abre (PDF e imágenes) o descarga (resto) un documento: hace falta pedirlo con la sesión, no vale un enlace directo */
+  async function openDocFile(url, name, type) {
+    const w = isInlineDoc(type) ? window.open('', '_blank') : null;
+    try {
+      const r = await fetch('/api/' + url, { headers: { Authorization: 'Bearer ' + state.token } });
+      if (!r.ok) throw new Error('No se pudo abrir el documento.');
+      const u = URL.createObjectURL(await r.blob());
+      if (w) w.location = u; else { const a = document.createElement('a'); a.href = u; a.download = name; a.click(); }
+      setTimeout(() => URL.revokeObjectURL(u), 60000);
+    } catch (e) { if (w) w.close(); toast(e.message); }
+  }
+  const docBtnAttrs = (url, d) => `data-doc-url="${esc(url)}" data-doc-name="${esc(d.name)}" data-doc-type="${esc(d.type)}"`;
+  const postDocsHTML = p => (p.docs && p.docs.length)
+    ? `<div class="post__docs">${p.docs.map(d => `<button type="button" class="doc-chip" ${docBtnAttrs(`news/${p.id}/files/${d.id}`, d)}><span aria-hidden="true">${docIcon(d.name)}</span><span class="doc-chip__name">${esc(d.name)}</span><small>${fmtSize(d.size)}</small></button>`).join('')}</div>`
+    : '';
+  const docCatOf = d => (DOC_CATS.some(c => c.id === d.category) ? d.category : 'otros');
+  function docCardHTML(d) {
+    const when = new Date(d.updatedAt || d.uploadedAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+    return `<article class="doc-card">
+      <div class="doc-card__icon" aria-hidden="true">${docIcon(d.name)}</div>
+      <div class="doc-card__main"><h4>${esc(d.title)}</h4>${d.description ? `<p class="muted">${esc(d.description)}</p>` : ''}
+        <small class="muted">${esc(d.name)} · ${fmtSize(d.size)} · ${when}</small></div>
+      <div class="doc-card__act"><button type="button" class="btn btn--primary btn--sm" ${docBtnAttrs(`docs/${d.id}/file`, d)}>${isInlineDoc(d.type) ? 'Abrir' : 'Descargar'}</button>
+        ${isAdmin() ? `<button type="button" class="btn btn--ghost btn--sm" data-doc-edit="${esc(d.id)}">Editar</button>` : ''}</div>
+    </article>`;
+  }
+  const docsSearch = q => { const n = norm(q); return state.docs.filter(d => norm(`${d.title} ${d.description || ''} ${d.name}`).includes(n)); };
+  function renderGallery(out) {
+    const body = state.docs.length
+      ? DOC_CATS.map(c => {
+          const items = state.docs.filter(d => docCatOf(d) === c.id);
+          return items.length ? `<h4 class="kb__group">${c.icon} ${esc(c.label)}</h4><div class="doc-grid">${items.map(docCardHTML).join('')}</div>` : '';
+        }).join('')
+      : `<div class="card"><p class="empty">${isAdmin()
+          ? 'La galería está vacía. Pulsa «+ Subir documento» para añadir el primer catálogo o documento.'
+          : 'Todavía no hay documentos. Cuando dirección suba catálogos o material, lo verás aquí.'}</p></div>`;
+    out.innerHTML = `<button type="button" class="kb-back" data-kb-home>← Todas las secciones</button>
+      <div class="kb-sechead"><h3>🗂️ Galería de documentos</h3><p class="muted">Catálogos, valores de la empresa y material para tener siempre a mano.</p></div>
+      ${body}`;
+  }
+
+  /* Galería: diálogo de subida y edición (admin) */
+  const docDlg = () => $('#docDialog');
+  let editingDoc = null;
+  function openDoc(id) {
+    if (!isAdmin()) return;
+    const d = id ? state.docs.find(x => x.id === id) : null;
+    if (id && !d) return;
+    editingDoc = id || null;
+    fillSelect($('#dCat'), DOC_CATS.map(c => [c.id, c.label]));
+    $('#docDlgTitle').textContent = d ? 'Editar documento' : 'Subir documento';
+    $('#dTitle').value = d ? d.title : '';
+    $('#dCat').value = d ? docCatOf(d) : 'catalogo';
+    $('#dDesc').value = d ? (d.description || '') : '';
+    $('#dFile').value = '';
+    $('#dCurrent').textContent = d ? `Archivo actual: ${d.name} (${fmtSize(d.size)}). Elige otro solo si quieres reemplazarlo.` : '';
+    $('#docError').hidden = true;
+    $('#docDelete').hidden = !d;
+    if (!docDlg().open) docDlg().showModal();
+    if (!d) $('#dTitle').focus();
+  }
+  function closeDoc() { if (docDlg().open) docDlg().close(); editingDoc = null; }
+  async function saveDoc(ev) {
+    ev.preventDefault();
+    const err = $('#docError'), title = $('#dTitle').value.trim(), file = $('#dFile').files[0];
+    const show = m => { err.textContent = m; err.hidden = false; };
+    if (!title) return show('Escribe un título.');
+    if (!editingDoc && !file) return show('Elige el archivo que quieres subir.');
+    if (file) { const m = docCheck(file); if (m) return show(m); }
+    err.hidden = true;
+    const btn = $('#docForm button[type=submit]');
+    btn.disabled = true;
+    try {
+      const payload = { title, category: $('#dCat').value, description: $('#dDesc').value.trim() };
+      if (file) payload.file = await uploadPayload(file);
+      const id = editingDoc;
+      const d = id ? await api('PUT', `docs/${encodeURIComponent(id)}`, payload) : await api('POST', 'docs', payload);
+      const i = state.docs.findIndex(x => x.id === d.id);
+      if (i >= 0) state.docs[i] = d; else state.docs.unshift(d);
+      closeDoc();
+      renderCurrent();
+      toast(id ? 'Documento actualizado' : 'Documento subido a la galería');
+    } catch (e) {
+      if (e.status >= 400 && e.status < 500 && !e.handled) show(e.message); else fail(e);
+    } finally { btn.disabled = false; }
+  }
+  async function deleteDoc() {
+    const id = editingDoc, d = state.docs.find(x => x.id === id);
+    if (!d) return;
+    if (!(await askConfirm({ title: 'Eliminar documento', message: `«${d.title}» dejará de estar disponible para todo el equipo.`, ok: 'Eliminar', danger: true }))) return;
+    try {
+      await api('DELETE', `docs/${encodeURIComponent(id)}`);
+      state.docs = state.docs.filter(x => x.id !== id);
+      closeDoc();
+      renderCurrent();
+      toast('Documento eliminado');
+    } catch (e) { fail(e); }
+  }
+
+  /* AppXnews: adjuntos en el editor de publicaciones */
+  let postStaged = [];            // archivos elegidos que se subirán al publicar
+  let postRemoved = new Set();    // adjuntos ya subidos que se quitarán al guardar
+  const keptPostDocs = () => { const p = editingPost ? state.posts.find(x => x.id === editingPost) : null; return ((p && p.docs) || []).filter(d => !postRemoved.has(d.id)); };
+  function renderPostDocs() {
+    $('#pDocs').innerHTML = keptPostDocs().map(d =>
+      `<li><span aria-hidden="true">${docIcon(d.name)}</span><span>${esc(d.name)} <small class="muted">${fmtSize(d.size)}</small></span><button type="button" class="icon-btn" data-rm-doc="${esc(d.id)}" aria-label="Quitar ${esc(d.name)}">✕</button></li>`).join('')
+      + postStaged.map((f, i) =>
+      `<li class="is-new"><span aria-hidden="true">${docIcon(f.name)}</span><span>${esc(f.name)} <small class="muted">${fmtSize(f.size)} · se subirá al publicar</small></span><button type="button" class="icon-btn" data-rm-new="${i}" aria-label="Quitar ${esc(f.name)}">✕</button></li>`).join('');
+  }
+  function stagePostFiles(files) {
+    const err = $('#newsError');
+    err.hidden = true;
+    const msgs = [];
+    for (const f of files) {
+      const m = docCheck(f);
+      if (m) { msgs.push(m); continue; }
+      if (keptPostDocs().length + postStaged.length >= POST_FILES_MAX) { msgs.push(`Máximo ${POST_FILES_MAX} documentos por publicación.`); break; }
+      postStaged.push(f);
+    }
+    if (msgs.length) { err.textContent = msgs.join(' '); err.hidden = false; }
+    renderPostDocs();
+  }
+
   function postHTML(p) {
     const edited = p.updatedAt && p.updatedAt !== p.createdAt;
     return `<article class="post post--${esc(p.category)}${p.pinned ? ' is-pinned' : ''}">
@@ -935,6 +1081,7 @@
       </header>
       <h3>${esc(p.title)}</h3>
       <div class="post__body">${richText(p.body)}</div>
+      ${postDocsHTML(p)}
       <footer class="post__foot"><small>Publicado por ${esc(p.authorName || 'Admin')}</small>
         ${isAdmin() ? `<button type="button" class="btn btn--ghost btn--sm" data-edit="${esc(p.id)}">Editar</button>` : ''}</footer>
     </article>`;
@@ -975,6 +1122,7 @@
     $('#pCat').value = p ? p.category : 'novedad';
     $('#pPinned').checked = p ? !!p.pinned : false;
     $('#pBody').value = p ? p.body : '';
+    postStaged = []; postRemoved = new Set(); renderPostDocs();
     $('#newsError').hidden = true;
     $('#newsDelete').hidden = !p;
     if (!ndlg().open) ndlg().showModal();
@@ -994,12 +1142,27 @@
     btn.disabled = true;
     try {
       const id = editingPost;
-      const p = id ? await api('PUT', `news/${encodeURIComponent(id)}`, payload) : await api('POST', 'news', payload);
+      let p = id ? await api('PUT', `news/${encodeURIComponent(id)}`, payload) : await api('POST', 'news', payload);
+      // adjuntos: primero se quitan los marcados y luego se suben los nuevos (la publicación ya está guardada)
+      const problems = [];
+      for (const fid of postRemoved) {
+        try { p = await api('DELETE', `news/${encodeURIComponent(p.id)}/files/${encodeURIComponent(fid)}`); } catch (e) { problems.push(e.message); }
+      }
+      for (const f of postStaged) {
+        try { p = await api('POST', `news/${encodeURIComponent(p.id)}/files`, { file: await uploadPayload(f) }); } catch (e) { problems.push(`${f.name}: ${e.message}`); }
+      }
       const i = state.posts.findIndex(x => x.id === p.id);
       if (i >= 0) state.posts[i] = p; else state.posts.push(p);
       sortPosts();
-      closePost();
       renderCurrent();
+      if (problems.length) {   // la publicación se guardó; el editor sigue abierto para reintentar los documentos
+        editingPost = p.id; postStaged = []; postRemoved = new Set(); renderPostDocs();
+        $('#newsDlgTitle').textContent = 'Editar publicación'; $('#newsDelete').hidden = false;
+        err.textContent = 'La publicación se guardó, pero hubo un problema con los documentos: ' + problems.join(' · ');
+        err.hidden = false;
+        return;
+      }
+      closePost();
       toast(id ? 'Publicación actualizada' : 'Publicado en AppXnews');
     } catch (e) {
       if (e.status >= 400 && e.status < 500 && !e.handled) { err.textContent = e.message; err.hidden = false; } else fail(e);
@@ -1132,14 +1295,20 @@
     const searching = norm(q).length >= 2;
     const out = $('#kbOut');
 
+    $('#newKb').textContent = state.kbSection === 'galeria' && !searching ? '+ Subir documento' : '+ Nueva entrada';
+
     if (searching) {
-      const res = kbSearch(q);
-      out.innerHTML = res.length
+      const res = kbSearch(q), dm = docsSearch(q);
+      const docsBlock = dm.length ? `<h4 class="kb__group">🗂️ Documentos</h4><div class="doc-grid">${dm.map(docCardHTML).join('')}</div>` : '';
+      const kbBlock = res.length
         ? `<p class="muted kb-count">${res.length} ${res.length === 1 ? 'resultado' : 'resultados'} para «${esc(q)}»</p>
            <div class="kb-list">${res.map(e => kbItemHTML(e, { searching: true, showSec: true })).join('')}</div>`
-        : `<div class="card"><p class="empty">No hay resultados para «${esc(q)}». Prueba con otras palabras o consulta con dirección.</p></div>`;
+        : (dm.length ? '' : `<div class="card"><p class="empty">No hay resultados para «${esc(q)}». Prueba con otras palabras o consulta con dirección.</p></div>`);
+      out.innerHTML = kbBlock + docsBlock;
       return;
     }
+
+    if (state.kbSection === 'galeria') { renderGallery(out); return; }
 
     const sec = KB_BY[state.kbSection];
     if (!sec) {   // portada: las secciones
@@ -1150,7 +1319,10 @@
           <span class="kb-tile__icon" aria-hidden="true">${x.icon}</span>
           <strong>${esc(x.name)}</strong><small class="muted">${esc(x.sub)}</small>
           <span class="kb-tile__n">${n} ${n === 1 ? 'entrada' : 'entradas'}</span></button>`;
-      }).join('') + '</div>';
+      }).join('') + `<button type="button" class="kb-tile" data-kb-sec="galeria">
+          <span class="kb-tile__icon" aria-hidden="true">🗂️</span>
+          <strong>Galería de documentos</strong><small class="muted">Catálogos, valores y material</small>
+          <span class="kb-tile__n">${state.docs.length} ${state.docs.length === 1 ? 'documento' : 'documentos'}</span></button></div>`;
       return;
     }
 
@@ -2256,9 +2428,11 @@
     });
 
     // Centro comercial
-    $('#newKb').addEventListener('click', () => openKb(null));
+    $('#newKb').addEventListener('click', () => (state.kbSection === 'galeria' ? openDoc(null) : openKb(null)));
     $('#kbQ').addEventListener('input', e => { state.kbQ = e.target.value; renderKb(); });
     $('#kbOut').addEventListener('click', e => {
+      const du = e.target.closest('[data-doc-url]'); if (du) { openDocFile(du.dataset.docUrl, du.dataset.docName, du.dataset.docType); return; }
+      const de = e.target.closest('[data-doc-edit]'); if (de) { openDoc(de.dataset.docEdit); return; }
       const sec = e.target.closest('[data-kb-sec]'); if (sec) { state.kbSection = sec.dataset.kbSec; renderKb(); window.scrollTo({ top: 0 }); return; }
       if (e.target.closest('[data-kb-home]')) { state.kbSection = ''; renderKb(); window.scrollTo({ top: 0 }); return; }
       const ed = e.target.closest('[data-kb-edit]'); if (ed) { openKb(ed.dataset.kbEdit); return; }
@@ -2282,7 +2456,10 @@
 
     // AppXnews
     $('#newPost').addEventListener('click', () => openPost(null));
-    $('#newsList').addEventListener('click', e => { const b = e.target.closest('[data-edit]'); if (b) openPost(b.dataset.edit); });
+    $('#newsList').addEventListener('click', e => {
+      const du = e.target.closest('[data-doc-url]'); if (du) { openDocFile(du.dataset.docUrl, du.dataset.docName, du.dataset.docType); return; }
+      const b = e.target.closest('[data-edit]'); if (b) openPost(b.dataset.edit);
+    });
     $('#newsChips').addEventListener('click', e => { const b = e.target.closest('[data-cat]'); if (b) { state.newsFilter = b.dataset.cat; renderNews(); } });
     $('#rankToggle').addEventListener('change', toggleRanking);
     $('#newsBanner').addEventListener('click', () => switchView('news'));
@@ -2290,6 +2467,19 @@
     $('#newsForm').addEventListener('submit', savePost);
     $('#newsDlgClose').addEventListener('click', closePost);
     $('#newsCancel').addEventListener('click', closePost);
+    $('#pFile').addEventListener('change', e => { stagePostFiles([...e.target.files]); e.target.value = ''; });
+    $('#pDocs').addEventListener('click', e => {
+      const old = e.target.closest('[data-rm-doc]'); if (old) { postRemoved.add(old.dataset.rmDoc); renderPostDocs(); return; }
+      const nw = e.target.closest('[data-rm-new]'); if (nw) { postStaged.splice(Number(nw.dataset.rmNew), 1); renderPostDocs(); }
+    });
+
+    // Galería de documentos (diálogo del admin)
+    $('#docForm').addEventListener('submit', saveDoc);
+    $('#docDlgClose').addEventListener('click', closeDoc);
+    $('#docCancel').addEventListener('click', closeDoc);
+    $('#docDelete').addEventListener('click', deleteDoc);
+    docDlg().addEventListener('click', e => { if (e.target === docDlg()) closeDoc(); });
+    docDlg().addEventListener('close', () => { editingDoc = null; });
     $('#newsDelete').addEventListener('click', deletePost);
     ndlg().addEventListener('click', e => { if (e.target === ndlg()) closePost(); });
     ndlg().addEventListener('close', () => { editingPost = null; });
